@@ -51,7 +51,8 @@ end
 local Instructions = {}
 
 do
-    local l = fs.list("./inst")
+    local path = "/"..fs.combine(fs.getDir(shell.getRunningProgram()),"inst")
+    local l = fs.list(path)
     for _,i in ipairs(l) do
         local req = require("inst."..i)
         for _,i in ipairs(req) do
