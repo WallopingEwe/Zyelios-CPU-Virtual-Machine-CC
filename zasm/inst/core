@@ -1,0 +1,287 @@
+local function END(vm) 
+    vm.int_vm(ERR_END_EXECUTION, vm.IP);
+end
+
+local function CPUID(vm)
+end
+
+local function ADD(vm)
+    op1 = op1 + op2;
+end
+
+local function SUB(vm)
+    op1 = op1 - op2;
+end
+
+local function MUL(vm)
+    op1 = op1 * op2;
+end
+
+local function DIV(vm)
+    op1 = op1 / op2;
+end
+
+local function MOV(vm)
+    op1 = op2;
+end
+
+local function MIN(vm)
+    op1 = (op1 < op2) and op1 or op2;
+end
+
+local function MAX(vm)
+    op1 = (op1 > op2) and op1 or op2;
+end
+
+local function INC(vm)
+    op1 = op1 + 1;
+end
+
+local function DEC(vm)
+    op1 = op1 - 1
+end
+
+local function NEG(vm)
+    op1 = -op1;
+end
+
+local function RAND(vm)
+    op1 = math.random();
+end
+
+local function LOOP(vm)
+    vm.ECX = vm.ECX - 1;
+    if (vm.ECX ~= 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function LOOPA(vm)
+    vm.EAX = vm.EAX - 1
+    if (vm.EAX ~= 0) then
+        vm:JMP(op1)
+    end
+end
+
+local function LOOPB(vm)
+    vm.EBX = vm.EBX - 1
+    if (vm.EBX ~= 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function LOOPD(vm)
+    vm.EDX = vm.EDX - 1
+    if (vm.EDX ~= 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function IDLE(vm)
+    
+end
+
+local function NOP(vm)
+    
+end
+
+local function JMPR(vm)
+    vm:JMP(vm.IP + op1);
+end
+
+local function LNEG(vm)
+	op1 = op1 == 0 and 1 or 0
+end
+
+local function RETF(vm)
+    local ip = vm:Pop();
+    if (vm.interrupt_flag) then return end;
+
+    local cs = vm:Pop();
+    if (vm.interrupt_flag) then return end;
+
+    vm:JMP(ip, cs);
+end
+
+local function AND(vm)
+    op1 = (op1 ~= 0 and op2 ~= 0) and 1 or 0;
+end
+
+local function OR(vm)
+    op1 = (op1 ~= 0 or op2 ~= 0) and 1 or 0;
+end
+
+local function XOR(vm)
+    op1 = (not (op1 ~= 0 and op2 ~= 0) and (op1 ~= 0 or op2 ~= 0)) and 1 or 0
+end
+
+local function INT(vm)
+    vm.int_vm(op1, 0);
+end
+
+local function STI(vm)
+    vm.cli_flag = 0;
+end
+
+local function CLI(vm)
+    vm.cli_flag = 1;
+end
+
+local function JUMPF(vm)
+    vm:JMP(op1, op2);
+end
+
+local function CALL(vm)
+    vm:CALL(op1);
+end
+
+local function RET(vm)
+    local ip = vm.Pop();
+    if (vm.interrupt_flag) then return end;
+
+    vm:JMP(ip);
+end
+
+local function XCHG(vm)
+    local cache = op1;
+    op1 = op2;
+    op2 = cache;
+end
+
+local function IN(vm)
+    -- op1 = inportb(op2);
+end
+
+local function OUT(vm)
+    -- outportb(op1, op2);
+end
+
+local function CALLF(vm)
+    vm:CALL(op1, op2);
+end
+
+local function TIMER(vm)
+    local now = os.clock();
+    
+    op1 = (now - vm.creation_time);
+end
+
+local function CPUGET(vm)
+    op1 = vm.GetInternalRegister(op2);
+end
+
+local function CPUSET(vm)
+    vm.SetInternalRegister(op1, op2);
+end
+
+local function LEA(vm)
+    
+end
+
+local function BLOCK(vm)
+    
+end
+
+local function STERR(vm)
+    
+end
+
+local function CLERR(vm)
+    
+end
+
+local function QUOCMP(vm)
+    
+end
+
+local function QUOTIMER(vm)
+    
+end
+
+local function MSHIFT(vm)
+    
+end
+
+local function MCOPY(vm)
+    local v;
+
+    for i = 0,op1,1 do
+        v = vm:ReadCell(i + vm.ESI);
+        if (vm.interrupt_flag) then return end;
+
+        vm:WriteCell(i + vm.EDI, v);
+        if (vm.interrupt_flag) then return end;
+    end
+end
+
+local function MXCHG(vm)
+    local esi_cache;
+    local edi_cache;
+    
+    for i = 0,op1,1 do
+        esi_cache = vm.ReadCell(vm.ESI);
+        if (vm.interrupt_flag) then return end;
+
+        edi_cache = vm.ReadCell(vm.EDI);
+        if (vm.interrupt_flag) then return end;
+
+        vm.WriteCell(vm.ESI, edi_cache);
+        if (vm.interrupt_flag) then return end;
+
+        vm.WriteCell(vm.EDI, esi_cache);
+        if (vm.interrupt_flag) then return end;
+
+        vm.ESI = vm.ESI + 1;
+        vm.EDI = vm.EDI + 1;
+    end
+end
+
+return {
+    { 0, 0, END },
+    { 8, 0, CPUID },
+    { 10, 2, ADD },
+    { 11, 2, SUB },
+    { 12, 2, MUL },
+    { 13, 2, DIV },
+    { 14, 2, MOV },
+    { 18, 2, MIN },
+    { 19, 2, MAX },
+    { 20, 1, INC },
+    { 21, 1, DEC },
+    { 22, 1, NEG },
+    { 23, 1, RAND },
+    { 24, 1, LOOP },
+    { 25, 1, LOOPA },
+    { 26, 1, LOOPB },
+    { 27, 1, LOOPD },
+    { 31, 1, CALL },
+    { 40, 0, RET },
+    { 42, 0, STI },
+    { 43, 0, CLI },
+    { 47, 0, RETF },
+    { 50, 2, AND },
+    { 51, 2, OR },
+    { 52, 2, XOR },
+    { 69, 2, JUMPF },
+    { 78, 1, MCOPY },
+    { 79, 1, MXCHG },
+    { 81, 2, XCHG },
+    { 84, 2, IN },
+    { 85, 2, OUT },
+    { 89, 2, CALLF },
+    { 92, 1, INT },
+    { 98, 1, TIMER },
+    { 102, 1, JMPR },
+    { 108, 1, LNEG },
+    { 111, 0, IDLE },
+    { 112, 0, NOP },
+    { 120, 2, CPUGET },
+    { 121, 2, CPUSET },
+    { 126, 0, LEA },
+    { 127, 0, BLOCK },
+    { 130, 0, MSHIFT },
+    { 150, 0, STERR },
+    { 151, 0, CLERR },
+    { 152, 0, QUOCMP },
+    { 153, 0, QUOTIMER },
+}

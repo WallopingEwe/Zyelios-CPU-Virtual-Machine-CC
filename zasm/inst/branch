@@ -1,0 +1,152 @@
+local function CMP(vm)
+    vm.CMPR = op1 - op2;
+end
+
+local function CMPAND(vm)
+    if (vm.CMPR ~= 0) then
+        vm.CMPR = op1 - op2;
+    end
+end
+
+local function CMPOR(vm) 
+    if (vm.CMPR == 0) then
+        vm.CMPR = op1 - op2;
+    end
+end
+
+local function JNE(vm) 
+    if (vm.CMPR ~= 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function JMP(vm)
+    vm:JMP(op1);
+end
+
+local function JG(vm)
+    if (vm.CMPR > 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function JGE(vm)
+    if (vm.CMPR >= 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function JL(vm) 
+    if (vm.CMPR < 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function JLE(vm)
+    if (vm.CMPR <= 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function JE(vm)
+    if (vm.CMPR == 0) then
+        vm:JMP(op1);
+    end
+end
+
+local function CNE(vm)
+    if (vm.CMPR ~= 0) then
+        vm:CALL(op1);
+    end
+end
+
+local function CG(vm)
+    if (vm.CMPR > 0) then
+        vm:CALL(op1);
+    end
+end
+
+local function CGE(vm)
+    if (vm.CMPR >= 0) then
+        vm:CALL(op1);
+    end
+end
+
+local function CL(vm)
+    if (vm.CMPR < 0) then
+        vm:CALL(op1);
+    end
+end
+
+local function CLE(vm)
+    if (vm.CMPR <= 0) then
+        vm:CALL(op1);
+    end
+end
+
+local function CE(vm)
+    if (vm.CMPR == 0) then
+        vm:CALL(op1);
+    end
+end
+
+local function JNER(vm)
+    if (vm.CMPR ~= 0) then
+        vm:CALL(op1, vm.IP);
+    end
+end
+
+local function JGR(vm)
+    if (vm.CMPR > 0) then
+        vm:CALL(op1, vm.IP);
+    end
+end
+
+local function JGER(vm)
+    if (vm.CMPR >= 0) then
+        vm:CALL(op1, vm.IP);
+    end
+end
+
+local function JLR(vm)
+    if (vm.CMPR < 0) then
+        vm:CALL(op1, vm.IP);
+    end
+end
+
+local function JLER(vm)
+    if (vm.CMPR <= 0) then
+        vm:CALL(op1, vm.IP);
+    end
+end
+
+local function JER(vm)
+    if (vm.CMPR == 0) then
+        vm:CALL(op1, vm.IP);
+    end
+end
+
+return {
+    { 1, 1, JNE },
+    { 2, 1, JMP },
+    { 3, 1, JG },
+    { 4, 1, JGE },
+    { 5, 1, JL },
+    { 6, 1, JLE },
+    { 7, 1, JE },
+    { 15, 2, CMP },
+    { 71, 1, CNE },
+    { 73, 1, CG },
+    { 74, 1, CGE },
+    { 75, 1, CL },
+    { 76, 1, CLE },
+    { 77, 1, CE },
+    { 101, 1, JNER },
+    { 103, 1, JGR },
+    { 104, 1, JGER },
+    { 105, 1, JLR },
+    { 106, 1, JLER },
+    { 107, 1, JER },
+    { 128, 2, CMPAND },
+    { 129, 2, CMPOR },
+}

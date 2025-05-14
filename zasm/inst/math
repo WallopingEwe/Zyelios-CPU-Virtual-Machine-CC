@@ -1,0 +1,118 @@
+local function FLOG(vm)
+    op1 = math.log(op2);
+end
+
+local function FLOG10(vm)
+    op1 = math.log10(op2);
+end
+
+local function FABS(vm)
+    op1 = math.abs(op2);
+end
+
+local function FSGN(vm)
+    if (op2 < 0) then
+        op1 = -1;
+    elseif (op2 > 0) then
+        op1 = 1;
+    else
+        op1 = 0;
+    end
+end
+
+local function FPWR(vm)
+    op1 = math.pow(op1, op2);
+end
+
+local function FEXP(vm)
+    op1 = math.exp(op2);
+end
+
+local function FPI(vm)
+    op1 = math.pi;
+end
+
+local function FE(vm)
+    op1 = 2.718281828459045235360287471352;
+end
+
+local function FCEIL(vm)
+    op1 = math.floor(op1+0.5);
+end
+
+local function FSIN(vm)
+    op1 = math.sin(op2);
+end
+
+local function FCOS(vm)
+    op1 = math.cos(op2);
+end
+
+local function FTAN(vm)
+    op1 = math.tan(op2);
+end
+
+local function FASIN(vm)
+    op1 = math.asin(op2);
+end
+
+local function FACOS(vm)
+    op1 = math.acos(op2);
+end
+
+local function FATAN(vm)
+    op1 = math.atan(op2);
+end
+
+local function MOD(vm)
+    op1 = math.fmod(op1,op2)
+end
+
+local function FINT(vm)
+    op1 = math.floor(op1);
+end
+
+local function RND(vm)
+    op1 = floor(op1 + 0.5);
+end
+
+local function FFRAC(vm)
+    op1 = math.modf(op1);
+end
+
+local function FINV(vm)
+    op1 = 1 / op1;
+end
+
+local function FSHL(vm)
+    op1 = op1*2;
+end
+
+local function FSHR(vm)
+    op1 = op1/2;
+end
+
+return {
+    { 33, 1, FINT },
+    { 34, 1, RND },
+    { 35, 1, FFRAC },
+    { 36, 1, FINV },
+    { 38, 1, FSHL },
+    { 39, 1, FSHR },
+    { 53, 2, FSIN },
+    { 54, 2, FCOS },
+    { 55, 2, FTAN },
+    { 56, 2, FASIN },
+    { 57, 2, FACOS },
+    { 58, 2, FATAN },
+    { 59, 2, MOD },
+    { 80, 2, FPWR },
+    { 82, 2, FLOG },
+    { 83, 2, FLOG10 },
+    { 86, 2, FABS },
+    { 87, 2, FSGN },
+    { 88, 2, FEXP },
+    { 90, 1, FPI },
+    { 91, 1, FE },
+    { 94, 1, FCEIL },
+}

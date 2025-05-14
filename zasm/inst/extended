@@ -1,0 +1,43 @@
+local function LIDTR(vm) 
+    vm.IDTR = op1;
+end
+
+local function EXTRET(vm) 
+    
+end
+
+local function STEF(vm) 
+    vm.extended_flag = 1;
+end
+
+local function CLEF(vm) 
+    vm.extended_flag = 0;
+end
+
+local function IRET(vm) 
+    local cs = vm:Pop()
+    if(vm.interrupt_flag) then return end
+
+    local ip = vm:Pop();
+    if(vm.interrupt_flag) then return end
+    
+    vm:JMP(ip, cs);
+end
+
+local function EXTINT(vm) 
+    
+end
+
+local function STD2(vm) 
+    
+end
+
+return {
+    { 41, 0, IRET },
+    { 48, 0, STEF },
+    { 49, 0, CLEF },
+    { 70, 0, EXTINT },
+    { 99, 1, LIDTR },
+    { 110, 0, EXTRET },
+    { 116, 0, STD2 },
+}

@@ -1,32 +1,9 @@
+local args = { ... }
+if not args[1] then
+    error("Requires a filename to execute",0)
+end
 local VM = {}
-local Instructions = {
-    { 0, 0, END },
-    { 1, 1, JNE },
-    { 2, 1, JMP },
-    { 3, 1, JG },
-    { 4, 1, JGE },
-    { 5, 1, JL },
-    { 6, 1, JLE },
-    { 7, 1, JE },
-    { 8, 0, CPUID },
-    { 9, 1, PUSH },
-    { 10, 2, ADD },
-    { 11, 2, SUB },
-    { 12, 2, MUL },
-    { 13, 2, DIV },
-    { 14, 2, MOV },
-    { 15, 2, CMP },
-    { 50, 2, AND },
-    { 51, 2, OR },
-    { 52, 2, XOR },
-    { 64, 2, BAND },
-    { 65, 2, BOR },
-    { 66, 2, BXOR },
-    { 67, 2, BSHL },
-    { 68, 2, BSHR }
-}
 
--- Error codes
 local ErrorCodes = {
     ERR_END_EXECUTION = 2,
     ERR_DIVISION_ZERO = 3,
@@ -38,7 +15,8 @@ local ErrorCodes = {
 }
 
 VM.Memory = {}
-for i = 0, 511 do
+VM.MEMORY_MODEL = 65536
+for i = 0, VM.MEMORY_MODEL do
     VM.Memory[i] = 0
 end
 VM.IP = 0
@@ -55,132 +33,69 @@ VM.cli_flag = 0
 VM.extended_flag = 0
 VM.extended_memory_flag = 0
 VM.EAX, VM.EBX, VM.ECX, VM.EDX = 0, 0, 0, 0
-VM.ESI, VM.EDI, VM.ESP, VM.EBP = 0, 0, 511, 0
+VM.ESI, VM.EDI, VM.ESP, VM.EBP = 0, 0, VM.MEMORY_MODEL-1, 0
 VM.CS, VM.SS, VM.DS, VM.ES, VM.GS, VM.FS, VM.KS, VM.LS = 0, 0, 0, 0, 0, 0, 0, 0
 VM.ESZ = 0
 VM.R = {}
 for i = 0, 31 do
     VM.R[i] = 0
 end
-VM.immediate_swap = 0
 VM.creation_time = os.clock()
 
--- Instruction implementations
-function END(vm, op1, op1_set)
+VM.ExternalMemory = peripheral.wrap("address_bus") or _G.address_bus
+
+local function END(vm, op1, op1_set)
     vm:int_vm(ErrorCodes.ERR_END_EXECUTION, 0)
 end
 
-function JNE(vm, op1, op1_set)
-    if vm.CMPR ~= 0 then
-        vm:JMP(op1, vm.CS)
+local Instructions = {}
+
+do
+    local l = fs.list("./inst")
+    for _,i in ipairs(l) do
+        local req = require("inst."..i)
+        for _,i in ipairs(req) do
+            table.insert(Instructions,i)
+        end
     end
 end
 
-function JMP(vm, op1, op1_set)
-    vm:JMP(op1, vm.CS)
-end
-
-function JG(vm, op1, op1_set)
-    if vm.CMPR > 0 then
-        vm:JMP(op1, vm.CS)
+local nInstructions = {}
+local inst_env = {
+    op1=0,
+    op2=0,
+    op1_set = error,
+    op2_set = error,
+}
+local envmeta = {
+    __index = function(self,k)
+        local v = rawget(inst_env,k)
+        if not v then
+            return _ENV[k]
+        end
+        return v
+    end,
+    __newindex = function(self,k,v)
+        local setter = inst_env[k.."_set"]
+        if not setter then
+            _ENV[k] = v
+            return
+        end
+        setter(v)
     end
-end
+}
+local fenv = setmetatable({},envmeta)
 
-function JGE(vm, op1, op1_set)
-    if vm.CMPR >= 0 then
-        vm:JMP(op1, vm.CS)
-    end
+for ind,i in pairs(Instructions) do
+    nInstructions[i[1]] = i
+    setfenv(i[3],fenv)
 end
-
-function JL(vm, op1, op1_set)
-    if vm.CMPR < 0 then
-        vm:JMP(op1, vm.CS)
-    end
-end
-
-function JLE(vm, op1, op1_set)
-    if vm.CMPR <= 0 then
-        vm:JMP(op1, vm.CS)
-    end
-end
-
-function JE(vm, op1, op1_set)
-    if vm.CMPR == 0 then
-        vm:JMP(op1, vm.CS)
-    end
-end
-
-function CPUID(vm, op1, op1_set)
-    vm:SetInternalRegister(1, 1) -- Set EAX to some CPU identifier
-end
-
-function PUSH(vm, op1, op1_set)
-    vm:Push(op1)
-end
-
-function ADD(vm, op1, op1_set, op2, op2_set)
-    op1_set(op1 + op2)
-end
-
-function SUB(vm, op1, op1_set, op2, op2_set)
-    op1_set(op1 - op2)
-end
-
-function MUL(vm, op1, op1_set, op2, op2_set)
-    op1_set(op1 * op2)
-end
-
-function DIV(vm, op1, op1_set, op2, op2_set)
-    if op2 == 0 then
-        vm:int_vm(ErrorCodes.ERR_DIVISION_ZERO, 0)
-        return
-    end
-    op1_set(op1 / op2)
-end
-
-function MOV(vm, op1, op1_set, op2, op2_set)
-    op1_set(op2)
-end
-
-function CMP(vm, op1, op1_set, op2, op2_set)
-    vm.CMPR = op1 - op2
-end
-
-function AND(vm, op1, op1_set, op2, op2_set)
-    op1_set((op1 ~= 0 and op2 ~= 0) and 1.0 or 0.0)
-end
-
-function OR(vm, op1, op1_set, op2, op2_set)
-    op1_set((op1 ~= 0 or op2 ~= 0) and 1.0 or 0.0)
-end
-
-function XOR(vm, op1, op1_set, op2, op2_set)
-    op1_set(((op1 ~= 0) ~= (op2 ~= 0)) and 1.0 or 0.0)
-end
-
-function BAND(vm, op1, op1_set, op2, op2_set)
-    op1_set(bit.band(math.floor(op1), math.floor(op2)))
-end
-
-function BOR(vm, op1, op1_set, op2, op2_set)
-    op1_set(bit.bor(math.floor(op1), math.floor(op2)))
-end
-
-function BXOR(vm, op1, op1_set, op2, op2_set)
-    op1_set(bit.bxor(math.floor(op1), math.floor(op2)))
-end
-
-function BSHL(vm, op1, op1_set, op2, op2_set)
-    op1_set(bit.lshift(math.floor(op1), math.floor(op2)))
-end
-
-function BSHR(vm, op1, op1_set, op2, op2_set)
-    op1_set(bit.rshift(math.floor(op1), math.floor(op2)))
-end
+Instructions = nInstructions
 
 function VM:JMP(address, segment)
+    segment = segment or self.CS
     address = address + segment
-    if address < 0 or address >= 512 then
+    if address < 0 or address >= VM.MEMORY_MODEL then
         self:int_vm(ErrorCodes.ERR_END_EXECUTION, address)
         return
     end
@@ -200,11 +115,12 @@ function VM:int_vm(n, p)
         self.interrupt_skip = 1
         return
     end
-
+    if self.extended_flag == 0 then
+        error(tostring(n).." "..tostring(p),2)
+    end
     if self.extended_flag ~= 0 then
         local addr = self.IDTR + n * 4
-        addr = math.max(0, math.min(addr, 510))
-        
+        addr = math.max(0, math.min(addr, self.MEMORY_MODEL - 2))
         local ip = self:ReadCell(addr, 0)
         local cs = self:ReadCell(addr + 1, 0)
         local newptbl = self:ReadCell(addr + 2, 0)
@@ -249,7 +165,7 @@ end
 
 function VM:Push(n)
     local address = self.ESP + self.SS
-    if self.ESP == self.SS or address < 0 or address >= 512 then
+    if self.ESP == self.SS or address < 0 or address >= VM.MEMORY_MODEL then
         self:int_vm(ErrorCodes.ERR_STACK_ERROR, n)
         return
     end
@@ -260,7 +176,7 @@ end
 function VM:Pop()
     self.ESP = self.ESP + 1
     local address = self.ESP + self.SS
-    if address < 0 or address >= 512 then
+    if address < 0 or address >= VM.MEMORY_MODEL then
         self:int_vm(ErrorCodes.ERR_STACK_ERROR, address)
         return nil
     end
@@ -268,26 +184,43 @@ function VM:Pop()
 end
 
 function VM:ReadCell(address, segment)
-    address = address + segment
-    if address < 0 or address >= 512 then
-        self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
-        return nil
+    address = address + (segment or VM.DS)
+    if address < 0 or address >= VM.MEMORY_MODEL then
+        if VM.ExternalMemory then
+            local v = VM.ExternalMemory:ReadCell(address-VM.MEMORY_MODEL)
+            if not v or type(v) ~= "number" then
+                self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+                return nil
+            end
+            return v
+        else
+            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            return nil
+        end
     end
     return self.Memory[address]
 end
 
 function VM:WriteCell(address, segment, value)
     address = address + segment
-    if address < 0 or address >= 512 then
-        self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
-        return
+    if address < 0 or address >= VM.MEMORY_MODEL then
+        if VM.ExternalMemory then
+            local v = VM.ExternalMemory:WriteCell(address-VM.MEMORY_MODEL,value)
+            if not v then
+                self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            end
+            return
+        else
+            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            return
+        end
     end
     self.Memory[address] = value
 end
 
 function VM:fetch()
     local address = self.CS + self.IP
-    if address < 0 or address >= 512 then
+    if address < 0 or address >= VM.MEMORY_MODEL then
         self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
         return 0
     end
@@ -309,12 +242,9 @@ function VM:GetOperand(rm, segment)
     end
 
     if rm == 0 then
-        self.immediate_swap = not self.immediate_swap
-        self.immediates = self.immediates or {}
-        self.immediates[self.immediate_swap and 1 or 2] = self:fetch()
+        local immediate = self:fetch()
         if self.interrupt_flag ~= 0 then return nil, nil end
-        -- Immediate values are read-only
-        return self.immediates[self.immediate_swap and 1 or 2], function() end
+        return immediate, function() end
     elseif rm <= 16 then
         local value = self:GetRegister(rm)
         if self.interrupt_flag ~= 0 then return nil, nil end
@@ -342,7 +272,6 @@ function VM:GetOperand(rm, segment)
         local immediate = self:fetch()
         if self.interrupt_flag ~= 0 then return nil, nil end
         local value = immediate + seg
-        -- Computed address is read-only
         return value, function() end
     elseif rm >= 2048 and rm <= 2079 then
         local index = rm - 2048
@@ -503,13 +432,7 @@ function VM:step()
         opcode = opcode - 2000
     end
 
-    local instr = nil
-    for i = 1, #Instructions do
-        if Instructions[i][1] == opcode then
-            instr = Instructions[i]
-            break
-        end
-    end
+    local instr = Instructions[opcode]
 
     if not instr then
         self:int_vm(ErrorCodes.ERR_UNKNOWN_OPCODE, opcode)
@@ -548,12 +471,40 @@ function VM:step()
     if instr[2] == 1 then
         local op1, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
-        instr[3](self, op1, op1_set)
+        inst_env.op1 = op1
+        inst_env.op1_set = op1_set
     else
         local op1, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
         local op2, op2_set = self:GetOperand(rm2, segment2)
         if self.interrupt_flag ~= 0 then return end
-        instr[3](self, op1, op1_set, op2, op2_set)
+        inst_env.op1 = op1
+        inst_env.op2 = op2
+        inst_env.op1_set = op1_set
+        inst_env.op2_set = op1_set
     end
+    instr[3](self)
+end
+
+
+local filename = args[1]
+local file = fs.open(filename, "r")
+
+
+local content = file.readAll()
+file.close()
+
+content = content:gsub("db", "")
+content = content:gsub("\n", "")
+content = content:gsub("%s+", "")
+
+local i = 0
+for num in content:gmatch("[+-]?%d*%.?%d+") do
+    VM.Memory[i] = tonumber(num)
+    i = i + 1
+end
+
+while VM.interrupt_flag == 0 do
+    VM:step()
+    print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
 end
