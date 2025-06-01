@@ -33,11 +33,11 @@ local function STD2(vm)
 end
 
 return {
-    { 41, 0, IRET },
-    { 48, 0, STEF },
-    { 49, 0, CLEF },
-    { 70, 0, EXTINT },
-    { 99, 1, LIDTR },
-    { 110, 0, EXTRET },
-    { 116, 0, STD2 },
+    { 41, 0, IRET, "IRET" },
+    { 48, 0, STEF, "STEF" },
+    { 49, 0, CLEF, "CLEF" },
+    { 70, 0, EXTINT, "EXTINT" },
+    { 99, 1, LIDTR, "LIDTR" },
+    { 110, 0, EXTRET, "EXTRET" },
+    { 116, 0, STD2, "STD2" },
 }

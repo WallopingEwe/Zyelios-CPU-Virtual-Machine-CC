@@ -75,12 +75,12 @@ local function LEAVE(vm)
 end
 
 return {
-    { 9, 1, PUSH },
-    { 30, 1, POP },
-    { 114, 0, PUSHA },
-    { 115, 0, POPA },
-    { 117, 0, LEAVE },
-    { 133, 2, RSTACK },
-    { 134, 2, SSTACK },
-    { 135, 1, ENTER },
+    { 9, 1, PUSH, "PUSH" },
+    { 30, 1, POP, "POP" },
+    { 114, 0, PUSHA, "PUSHA" },
+    { 115, 0, POPA, "POPA" },
+    { 117, 0, LEAVE, "LEAVE" },
+    { 133, 2, RSTACK, "RSTACK" },
+    { 134, 2, SSTACK, "SSTACK" },
+    { 135, 1, ENTER, "ENTER" },
 }

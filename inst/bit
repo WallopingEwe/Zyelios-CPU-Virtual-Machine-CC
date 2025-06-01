@@ -1,47 +1,47 @@
-function BIT(vm) 
+local function BIT(vm) 
     vm.CMPR = bit.band(bit.brshift(op1,op2),1)
 end
 
-function SBIT(vm) 
+local function SBIT(vm) 
 	op1 = bit.bor(op1,math.ldexp(1,op2))
 end
 
-function CBIT(vm)
+local function CBIT(vm)
     op1 = bit.band(op1,(bit.bnot(math.ldexp(1,op2))))
 end
 
-function TBIT(vm)
+local function TBIT(vm)
 	op1 = bit.bxor(op1,math.ldexp(op2))
 end
 
-function BAND(vm)
+local function BAND(vm)
     op1 = bit.band(op1,op2)
 end
 
-function BOR(vm)
+local function BOR(vm)
     op1 = bit.bor(op1,op2)
 end
 
-function BSHL(vm)
+local function BSHL(vm)
     op1 = bit.blshift(op1,op2)
 end
 
-function BSHR(vm)
+local function BSHR(vm)
     op1 = bit.brshift(op1,op2);
 end
 
-function BNOT(vm)
+local function BNOT(vm)
     op1 = bit.bnot(op1)
 end
 
 
 return {
-    { 60, 2, BIT },
-    { 61, 2, SBIT },
-    { 62, 2, CBIT },
-    { 63, 2, TBIT },
-    { 64, 2, BAND },
-    { 65, 2, BOR },
-    { 67, 2, BSHL },
-    { 68, 0, BSHR },
+    { 60, 2, BIT, "BIT" },
+    { 61, 2, SBIT, "SBIT" },
+    { 62, 2, CBIT, "CBIT" },
+    { 63, 2, TBIT, "TBIT" },
+    { 64, 2, BAND, "BAND" },
+    { 65, 2, BOR, "BOR" },
+    { 67, 2, BSHL, "BSHL" },
+    { 68, 2, BSHR, "BSHR" },
 }
