@@ -293,6 +293,7 @@ function VM:GetOperand(rm, segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
         return value, memory_setter(addr, seg)
     end
+    print(rm)
     self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, 0)
     return nil, nil
 end
@@ -505,7 +506,10 @@ for num in content:gmatch("[+-]?%d*%.?%d+") do
     i = i + 1
 end
 
+term.clear()
 while VM.interrupt_flag == 0 do
     VM:step()
+    term.setCursorPos(1,1)
+    sleep(0.05)
     print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
 end
