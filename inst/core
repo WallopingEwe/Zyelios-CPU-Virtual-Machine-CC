@@ -1,5 +1,5 @@
 local function END(vm) 
-    vm:int_vm(ERR_END_EXECUTION, vm.IP);
+    vm:int_vm(vm.ErrorCodes.ERR_END_EXECUTION, vm.IP);
 end
 
 local function CPUID(vm)
@@ -237,6 +237,7 @@ local function MXCHG(vm)
 end
 
 return {
+    { 0, 0, END, "END" },
     { 8, 0, CPUID, "CPUID" },
     { 10, 2, ADD, "ADD" },
     { 11, 2, SUB, "SUB" },

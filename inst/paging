@@ -26,7 +26,7 @@ local function SMAP(vm)
             page.remapped = 1
             page.map = op2
         else
-            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            vm:int_vm(vm.ErrorCodes.ERR_PAGE_VIOLATION, index)
             return
         end
 
@@ -80,7 +80,7 @@ local function SPG(vm)
         page.read = 1
         page.write = 0
     else
-        vm:int_vm("ERR_PAGE_VIOLATION", index)
+        vm:int_vm(vm.ErrorCodes.ERR_PAGE_VIOLATION, index)
     end
 end
 
@@ -93,7 +93,7 @@ local function CPG(vm)
         page.read = 1
         page.write = 1
     else
-        vm:int_vm("ERR_PAGE_VIOLATION", index)
+        vm:int_vm(vm.ErrorCodes.ERR_PAGE_VIOLATION, index)
     end
 end
 
@@ -132,7 +132,7 @@ local function SPP(vm)
             elseif mode == 2 then page.execute = 1
             elseif mode == 3 then page.runlevel = 1 end
         else
-            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            vm:int_vm(vm.ErrorCodes.ERR_PAGE_VIOLATION, index)
             return
         end
 
@@ -163,7 +163,7 @@ local function CPP(vm)
             elseif mode == 2 then page.execute = 0
             elseif mode == 3 then page.runlevel = 0 end
         else
-            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            vm:int_vm(vm.ErrorCodes.ERR_PAGE_VIOLATION, index)
             return
         end
 
@@ -190,7 +190,7 @@ local function SRL(vm)
         if vm.CurrentPage.runlevel <= page.runlevel then
             page.runlevel = op2
         else
-            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            vm:int_vm(vm.ErrorCodes.ERR_PAGE_VIOLATION, index)
             return
         end
 

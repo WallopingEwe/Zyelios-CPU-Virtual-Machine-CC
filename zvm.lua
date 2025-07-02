@@ -4,7 +4,7 @@ if not args[1] then
 end
 local VM = {}
 
-local ErrorCodes = {
+VM.ErrorCodes = {
     ERR_END_EXECUTION = 2,
     ERR_DIVISION_ZERO = 3,
     ERR_UNKNOWN_OPCODE = 4,
@@ -171,10 +171,6 @@ setmetatable(VM.Pages, {
 VM.CurrentPage = VM.Pages[0]
 VM.PrevPage = VM.CurrentPage
 
-local function END(vm, op1, op1_set)
-    vm:int_vm(ErrorCodes.ERR_END_EXECUTION, 0)
-end
-
 local Instructions = {}
 
 do
@@ -224,7 +220,7 @@ function VM:JMP(address, segment)
     segment = segment or self.CS
     address = address + segment
     if address < 0 or address >= VM.MEMORY_MODEL then
-        self:int_vm(ErrorCodes.ERR_END_EXECUTION, address)
+        self:int_vm(self.ErrorCodes.ERR_END_EXECUTION, address)
         return
     end
     self.CS = segment
@@ -296,7 +292,7 @@ function VM:Push(n)
 
     if self.ESP < 0 then
         self.ESP = 0
-        self:int_vm(ErrorCodes.ERR_STACK_ERROR, self.ESP)
+        self:int_vm(self.ErrorCodes.ERR_STACK_ERROR, self.ESP)
     end
 end
 
@@ -305,7 +301,7 @@ function VM:Pop()
     
     if self.ESP > self.ESZ then
         self.ESP = self.ESZ
-        self:int_vm(ErrorCodes.ERR_STACK_ERROR, self.ESP)
+        self:int_vm(self.ErrorCodes.ERR_STACK_ERROR, self.ESP)
         return
     end
 
@@ -317,12 +313,12 @@ function VM:ReadCell(address)
         if VM.ExternalMemory then
             local v = VM.ExternalMemory:ReadCell(address-VM.MEMORY_MODEL)
             if not v or type(v) ~= "number" then
-                self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+                self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
                 return nil
             end
             return v
         else
-            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
             return nil
         end
     end
@@ -333,17 +329,17 @@ function VM:ReadCell(address)
         if self.interrupt_flag ~= 0 then return nil end
 
         if page.trapped == 1 then
-            self:int_vm(ErrorCodes.ERR_PAGE_TRAPPED, address)
+            self:int_vm(self.ErrorCodes.ERR_PAGE_TRAPPED, address)
             return nil
         end
 
         if page.disabled ==1 then
-            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
             return nil
         end
 
         if self.extended_flag and self.CurrentPage.runlevel > page.runlevel and page.read == 0 then
-            self:int_vm(ErrorCodes.ERR_READ_VIOLATION, address)
+            self:int_vm(self.ErrorCodes.ERR_READ_VIOLATION, address)
             return nil
         end 
 
@@ -360,7 +356,7 @@ function VM:ReadCell(address)
                 self.MEMADDR = address
                 self.LADD = self.Memory[address]
 
-                self:int_vm(ErrorCodes.READ_REQUEST, 0)
+                self:int_vm(self.ErrorCodes.READ_REQUEST, 0)
                 return nil
             end
         end
@@ -374,11 +370,11 @@ function VM:WriteCell(address, value)
         if VM.ExternalMemory then
             local v = VM.ExternalMemory:WriteCell(address-VM.MEMORY_MODEL,value)
             if not v then
-                self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+                self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
             end
             return
         else
-            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
             return
         end
     end
@@ -389,12 +385,12 @@ function VM:WriteCell(address, value)
         if self.interrupt_flag ~= 0 then return end
 
         if page.trapped == 1 then
-            self:int_vm(ErrorCodes.ERR_PAGE_TRAPPED, address)
+            self:int_vm(self.ErrorCodes.ERR_PAGE_TRAPPED, address)
             return
         end
 
         if page.disabled ==1 then
-            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
             return
         end
 
@@ -407,20 +403,20 @@ function VM:WriteCell(address, value)
                 address = self.MEMADDR
                 value = self.LADD
 
-                self:int_vm(ErrorCodes.READ_REQUEST, 0)
+                self:int_vm(self.ErrorCodes.READ_REQUEST, 0)
                 return
             else
                 self.MEMRQ = 3
                 self.MEMADDR = address
                 self.LADD = value
 
-                self:int_vm(ErrorCodes.WRITE_REQUEST, self.LADD)
+                self:int_vm(self.ErrorCodes.WRITE_REQUEST, self.LADD)
                 return
             end
         end
 
         if self.extended_flag and self.CurrentPage.runlevel > page.runlevel and page.write == 0 then
-            self:int_vm(ErrorCodes.ERR_READ_VIOLATION, address)
+            self:int_vm(self.ErrorCodes.ERR_READ_VIOLATION, address)
             return
         end 
 
@@ -435,7 +431,7 @@ end
 function VM:fetch()
     local address = self.CS + self.IP
     if address < 0 or address >= VM.MEMORY_MODEL then
-        self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+        self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
         return 0
     end
     local value = self.Memory[address]
@@ -507,7 +503,7 @@ function VM:GetOperand(rm, segment)
         return value, memory_setter(addr + seg)
     end
     
-    self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, 0)
+    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, 0)
     return nil, nil
 end
 
@@ -532,7 +528,7 @@ function VM:GetRegister(index)
     }
     local reg = registers[index]
     if reg then return reg() end
-    self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, index)
+    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
     return nil
 end
 
@@ -557,7 +553,7 @@ function VM:GetSegment(index)
     }
     if segments[index] then return segments[index]() end
     if index >= 17 and index <= 47 then return self.R[index - 17] end
-    self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, index)
+    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
     return nil
 end
 
@@ -635,7 +631,7 @@ function VM:GetInternalRegister(index)
     }
     if registers[index] then return registers[index] end
     if index >= 96 and index <= 126 then return self.R[index - 17] end
-    self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, index)
+    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
     return 0
 end
 
@@ -716,7 +712,7 @@ function VM:SetInternalRegister(index, value)
     elseif index >= 96 and index <= 126 then
         self.R[index - 17] = value
     else
-        self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, index)
+        self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
     end
 end
 
@@ -729,7 +725,7 @@ function VM:step()
     if self.interrupt_flag ~= 0 then return end
 
     if self.PCAP ~= 0 and self.CurrentPage.execute == 0 and self.PreviousPage.runlevel > 0 then
-        self:int_vm(ErrorCodes.ERR_EXECUTE_VIOLATION, self.IP)
+        self:int_vm(self.ErrorCodes.ERR_EXECUTE_VIOLATION, self.IP)
         return
     end
 
@@ -743,7 +739,7 @@ function VM:step()
     local instr = Instructions[opcode]
 
     if not instr then
-        self:int_vm(ErrorCodes.ERR_UNKNOWN_OPCODE, opcode)
+        self:int_vm(self.ErrorCodes.ERR_UNKNOWN_OPCODE, opcode)
         return
     end
 
