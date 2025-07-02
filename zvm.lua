@@ -11,7 +11,17 @@ local ErrorCodes = {
     ERR_INTERNAL_ERROR = 5,
     ERR_STACK_ERROR = 6,
     ERR_MEMORY_FAULT = 7,
-    ERR_PROCESSOR_FAULT = 13
+    ERR_MEMBUS_FAULT = 8,
+    ERR_WRITE_VIOLATION = 9,
+    ERR_PORT_FAULT = 10,
+    ERR_PAGE_VIOLATION = 11,
+    ERR_READ_VIOLATION = 12,
+    ERR_PROCESSOR_FAULT = 13,
+    ERR_EXECUTE_VIOLATION = 14,
+    ERR_ADDRESS_VIOLATION = 15,
+    READ_REQUEST = 28,
+    WRITE_REQUEST = 29,
+    ERR_PAGE_TRAPPED = 30
 }
 
 VM.Memory = {}
@@ -25,6 +35,7 @@ VM.CMPR = 0
 VM.IDTR = 0
 VM.PTBE = 0
 VM.PTBL = 0
+VM.PCAP = 1
 VM.interrupt_flag = 0
 VM.interrupt_skip = 0
 VM.LINT = 0
@@ -35,7 +46,12 @@ VM.extended_memory_flag = 0
 VM.EAX, VM.EBX, VM.ECX, VM.EDX = 0, 0, 0, 0
 VM.ESI, VM.EDI, VM.ESP, VM.EBP = 0, 0, VM.MEMORY_MODEL-1, 0
 VM.CS, VM.SS, VM.DS, VM.ES, VM.GS, VM.FS, VM.KS, VM.LS = 0, 0, 0, 0, 0, 0, 0, 0
-VM.ESZ = 0
+VM.ESZ = VM.ESP
+VM.BLOCKSTART, VM.BLOCKSIZE = 0, 0
+VM.PreqHandled = -1
+VM.PreqOperand1 = 0
+VM.PreqOperand2 = 0
+VM.PreqReturn = 0
 VM.R = {}
 for i = 0, 31 do
     VM.R[i] = 0
@@ -43,6 +59,117 @@ end
 VM.creation_time = os.clock()
 
 VM.ExternalMemory = peripheral.wrap("address_bus") or _G.address_bus
+
+
+local pages = {}
+pages.proxies = {}
+for i = 0, VM.MEMORY_MODEL / 128 do
+   pages[i] = {
+        disabled = 0, -- 0
+        remapped = 0, -- 1
+        trapped = 0, -- 2
+        override = 0, -- 3
+        unused = 0, -- 4
+        read = 0, -- 5
+        write = 0, -- 6
+        execute = 0, -- 7
+        runlevel = 0,
+        map = 0
+    }
+
+    local idx = i
+    local proxy = {}
+    setmetatable(proxy, {
+        __index = function(_, k)
+            return pages[idx][k]
+        end,
+        __newindex = function(_, k, v)
+            local page = pages[idx]
+            local mask = 0
+            page[k] = v
+
+            if page.disabled ~= 0 then mask = mask + 1 end
+            if page.remapped ~= 0 then mask = mask + 2 end
+            if page.trapped ~= 0 then mask = mask + 4 end
+            if page.override ~= 0 then mask = mask + 8 end
+            if page.unused ~= 0 then mask = mask + 16 end
+            if page.read ~= 0 then mask = mask + 32 end
+            if page.write ~= 0 then mask = mask + 64 end
+            if page.execute ~= 0 then mask = mask + 128 end
+            mask = mask + page.runlevel * 256
+
+            if idx >= VM.PTBE or idx < 0 then
+                pageEntry = VM.PTBL
+            else
+                pageEntry = VM.PTBL + (idx + 1) * 2
+            end
+
+            VM.PCAP = 0
+            VM:WriteCell(pageEntry, mask);
+            VM:WriteCell(pageEntry + 1, page.map);
+            VM.PCAP = 1
+        end
+    })
+    
+    pages.proxies[i] = proxy
+end
+
+VM.Pages = {}
+
+setmetatable(VM.Pages, {
+    __index = function(self, k)
+        if VM.PCAP == 1 and VM.extended_memory_flag == 1 then
+            local pageEntry
+
+            if k >= VM.PTBE or k < 0 then
+                pageEntry = VM.PTBL
+            else
+                pageEntry = VM.PTBL + (k + 1) * 2
+            end
+
+            VM.PCAP = 0
+            local new_mask = VM:ReadCell(pageEntry)
+            local new_map = VM:ReadCell(pageEntry + 1)
+            VM.PCAP = 1            
+            
+            if VM.interrupt_flag ~= 0 then return end
+
+            local page = pages[k]
+            page.disabled = bit.band(new_mask, 1) ~= 0 and 1 or 0
+            page.remapped = bit.band(new_mask, 2) ~= 0 and 1 or 0
+            page.trapped = bit.band(new_mask, 4) ~= 0 and 1 or 0
+            page.override = bit.band(new_mask, 8) ~= 0 and 1 or 0
+            page.unused = bit.band(new_mask, 16) ~= 0 and 1 or 0
+            page.read = bit.band(new_mask, 32) ~= 0 and 1 or 0
+            page.write = bit.band(new_mask, 64) ~= 0 and 1 or 0
+            page.execute = bit.band(new_mask, 128) ~= 0 and 1 or 0
+            page.runlevel = math.floor(new_mask/256) % 256
+            page.map = new_map
+
+            return pages.proxies[k]
+        end
+
+        -- DefaultPage
+        return {
+            disabled = 0, -- 0
+            remapped = 0, -- 1
+            trapped = 0, -- 2
+            override = 0, -- 3
+            unused = 0, -- 4
+            read = 0, -- 5
+            write = 0, -- 6
+            execute = 0, -- 7
+            runlevel = 0,
+            map = 0
+        }
+    end,
+
+    __newindex = function()
+    end
+})
+
+VM.CurrentPage = VM.Pages[0]
+VM.PrevPage = VM.CurrentPage
 
 local function END(vm, op1, op1_set)
     vm:int_vm(ErrorCodes.ERR_END_EXECUTION, 0)
@@ -116,16 +243,14 @@ function VM:int_vm(n, p)
         self.interrupt_skip = 1
         return
     end
-    if self.extended_flag == 0 then
-        error(tostring(n).." "..tostring(p),2)
-    end
+    
     if self.extended_flag ~= 0 then
         local addr = self.IDTR + n * 4
         addr = math.max(0, math.min(addr, self.MEMORY_MODEL - 2))
-        local ip = self:ReadCell(addr, 0)
-        local cs = self:ReadCell(addr + 1, 0)
-        local newptbl = self:ReadCell(addr + 2, 0)
-        local flags = self:ReadCell(addr + 3, 0)
+        local ip = self:ReadCell(addr)
+        local cs = self:ReadCell(addr + 1)
+        local newptbl = self:ReadCell(addr + 2)
+        local flags = self:ReadCell(addr + 3)
 
         if bit.band(flags, 32) ~= 0 then
             self:Push(self.IP)
@@ -165,27 +290,29 @@ function VM:int_vm(n, p)
 end
 
 function VM:Push(n)
-    local address = self.ESP + self.SS
-    if self.ESP == self.SS or address < 0 or address >= VM.MEMORY_MODEL then
-        self:int_vm(ErrorCodes.ERR_STACK_ERROR, n)
-        return
-    end
-    self.Memory[address] = n
     self.ESP = self.ESP - 1
+    local v = self:WriteCell(self.ESP + self.SS)
+    if self.interrupt_flag ~= 0 then return end
+
+    if self.ESP < 0 then
+        self.ESP = 0
+        self:int_vm(ErrorCodes.ERR_STACK_ERROR, self.ESP)
+    end
 end
 
 function VM:Pop()
     self.ESP = self.ESP + 1
-    local address = self.ESP + self.SS
-    if address < 0 or address >= VM.MEMORY_MODEL then
-        self:int_vm(ErrorCodes.ERR_STACK_ERROR, address)
-        return nil
+    
+    if self.ESP > self.ESZ then
+        self.ESP = self.ESZ
+        self:int_vm(ErrorCodes.ERR_STACK_ERROR, self.ESP)
+        return
     end
-    return self.Memory[address]
+
+    return self:ReadCell(self.ESP + self.SS);
 end
 
-function VM:ReadCell(address, segment)
-    address = address + (segment or VM.DS)
+function VM:ReadCell(address)
     if address < 0 or address >= VM.MEMORY_MODEL then
         if VM.ExternalMemory then
             local v = VM.ExternalMemory:ReadCell(address-VM.MEMORY_MODEL)
@@ -199,11 +326,50 @@ function VM:ReadCell(address, segment)
             return nil
         end
     end
+    
+    if self.PCAP ~= 0 and self.extended_memory_flag ~= 0 then
+        local index = math.floor(address / 128)
+        local page = self.Pages[index]
+        if self.interrupt_flag ~= 0 then return nil end
+
+        if page.trapped == 1 then
+            self:int_vm(ErrorCodes.ERR_PAGE_TRAPPED, address)
+            return nil
+        end
+
+        if page.disabled ==1 then
+            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            return nil
+        end
+
+        if self.extended_flag and self.CurrentPage.runlevel > page.runlevel and page.read == 0 then
+            self:int_vm(ErrorCodes.ERR_READ_VIOLATION, address)
+            return nil
+        end 
+
+        if page.remapped == 1 and page.map ~= index then
+            address = address % 128 + page.map * 128
+        end
+
+        if page.override == 1 then
+            if self.MEMRQ == 4 then
+                self.MEMRQ = 0
+                return self.LADD
+            else
+                self.MEMRQ = 2
+                self.MEMADDR = address
+                self.LADD = self.Memory[address]
+
+                self:int_vm(ErrorCodes.READ_REQUEST, 0)
+                return nil
+            end
+        end
+    end
+
     return self.Memory[address]
 end
 
-function VM:WriteCell(address, segment, value)
-    address = address + segment
+function VM:WriteCell(address, value)
     if address < 0 or address >= VM.MEMORY_MODEL then
         if VM.ExternalMemory then
             local v = VM.ExternalMemory:WriteCell(address-VM.MEMORY_MODEL,value)
@@ -216,6 +382,53 @@ function VM:WriteCell(address, segment, value)
             return
         end
     end
+
+    if self.PCAP ~= 0 and self.extended_memory_flag ~= 0 then
+        local index = math.floor(address / 128)
+        local page = self.Pages[index]
+        if self.interrupt_flag ~= 0 then return end
+
+        if page.trapped == 1 then
+            self:int_vm(ErrorCodes.ERR_PAGE_TRAPPED, address)
+            return
+        end
+
+        if page.disabled ==1 then
+            self:int_vm(ErrorCodes.ERR_MEMORY_FAULT, address)
+            return
+        end
+
+        if page.override == 1 then
+            if self.MEMRQ == 6 then
+                self.MEMRQ = 0
+                return
+            elseif self.MEMRQ == 5 then
+                self.MEMRQ = 0
+                address = self.MEMADDR
+                value = self.LADD
+
+                self:int_vm(ErrorCodes.READ_REQUEST, 0)
+                return
+            else
+                self.MEMRQ = 3
+                self.MEMADDR = address
+                self.LADD = value
+
+                self:int_vm(ErrorCodes.WRITE_REQUEST, self.LADD)
+                return
+            end
+        end
+
+        if self.extended_flag and self.CurrentPage.runlevel > page.runlevel and page.write == 0 then
+            self:int_vm(ErrorCodes.ERR_READ_VIOLATION, address)
+            return
+        end 
+
+        if page.remapped == 1 and page.map ~= index then
+            address = address % 128 + page.map * 128
+        end
+    end
+
     self.Memory[address] = value
 end
 
@@ -231,9 +444,9 @@ function VM:fetch()
 end
 
 function VM:GetOperand(rm, segment)
-    local function memory_setter(addr, seg)
+    local function memory_setter(addr)
         return function(value)
-            self:WriteCell(addr, seg, value)
+            self:WriteCell(addr, value)
         end
     end
     local function register_setter(index)
@@ -254,19 +467,19 @@ function VM:GetOperand(rm, segment)
         local reg = self:GetRegister(rm - 16)
         if self.interrupt_flag ~= 0 then return nil, nil end
         local addr = reg
-        local seg = segment == -1 and 0 or self:GetSegment(segment)
+        local seg = segment == -1 and self.DS or self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr, seg)
+        local value = self:ReadCell(addr + seg)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr, seg)
+        return value, memory_setter(addr + seg)
     elseif rm == 25 then
         local addr = self:fetch()
         if self.interrupt_flag ~= 0 then return nil, nil end
-        local seg = segment == -1 and 0 or self:GetSegment(segment)
+        local seg = segment == -1 and self.DS or self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr, seg)
+        local value = self:ReadCell(addr + seg)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr, seg)
+        return value, memory_setter(addr + seg)
     elseif rm == 50 then
         local seg = self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
@@ -279,21 +492,21 @@ function VM:GetOperand(rm, segment)
         return self.R[index], function(value) self.R[index] = value end
     elseif rm >= 2080 and rm <= 2111 then
         local addr = self.R[rm - 2080]
-        local seg = segment == -1 and 0 or self:GetSegment(segment)
+        local seg = segment == -1 and self.DS or self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr, seg)
+        local value = self:ReadCell(addr + seg)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr, seg)
+        return value, memory_setter(addr + seg)
     elseif rm >= 2144 and rm <= 2175 then
         local addr = self:fetch()
         if self.interrupt_flag ~= 0 then return nil, nil end
-        local seg = segment == -1 and 0 or self:GetSegment(segment)
+        local seg = segment == -1 and self.DS or self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr, seg)
+        local value = self:ReadCell(addr + seg)
         if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr, seg)
+        return value, memory_setter(addr + seg)
     end
-    print(rm)
+    
     self:int_vm(ErrorCodes.ERR_PROCESSOR_FAULT, 0)
     return nil, nil
 end
@@ -373,11 +586,52 @@ function VM:GetInternalRegister(index)
         [26] = self.XEIP,
         [27] = self.LADD,
         [28] = self.LINT,
+        [29] = 0, -- TMR
+        [30] = 0, -- TIMER
+        [31] = 0, -- CPAGE
         [32] = self.interrupt_flag,
+        [33] = 0, -- PF
         [34] = self.extended_flag,
+        [35] = 0, -- NIF
         [36] = self.extended_memory_flag,
         [37] = self.PTBL,
-        [38] = self.PTBE
+        [38] = self.PTBE,
+        [39] = self.PCAP,
+        [40] = 0, -- RQCAP
+        [41] = 0, -- PPAGE
+        [42] = self.MEMRQ,
+        [43] = self.MEMORY_MODEL,
+        [44] = 0, -- External
+        [45] = 0, -- Buslock
+        [46] = 0, -- Idle
+        [47] = 0, -- INTR
+        [48] = 0, -- Serial Number
+        [49] = 0, -- Code Bytes
+        [50] = 0, -- BPREC
+        [51] = 0, -- IPREC
+        [52] = 0, -- NIDT
+        [53] = self.BLOCKSTART,
+        [54] = self.BLOCKSIZE,
+        [55] = 0, -- VMODE
+        [56] = 0, -- XTRL
+        [57] = 0, -- HaltPort
+        [58] = 0, -- HWDEBUG
+        [59] = 0, -- DBGSTATE
+        [60] = 0, -- DBGADDR
+        [61] = 0, -- CRL
+        [62] = 0, -- TIMERDT
+        [63] = self.MEMADDR,
+        [64] = 0, -- TimerMode
+        [65] = 0, -- TimerRate
+        [66] = 0, -- TimerPrevTime
+        [67] = 0, -- TimerAddress
+        [68] = 0, -- TimerPrevMode
+        [69] = 0, -- LASTQUO
+        [70] = 0, -- QUOFLAG
+        [71] = self.PreqOperand1,
+        [72] = self.PreqOperand2,
+        [73] = self.PreqReturn,
+        [74] = self.PreqHandled,
     }
     if registers[index] then return registers[index] end
     if index >= 96 and index <= 126 then return self.R[index - 17] end
@@ -387,7 +641,7 @@ end
 
 function VM:SetInternalRegister(index, value)
     local setters = {
-        [0] = function(v) self:JMP(v, self.CS) end,
+        [0] = function(v) self:JMP(v, self.CS) end, -- IP
         [1] = function(v) self.EAX = v end,
         [2] = function(v) self.EBX = v end,
         [3] = function(v) self.ECX = v end,
@@ -407,13 +661,55 @@ function VM:SetInternalRegister(index, value)
         [23] = function(v) self.LS = v end,
         [24] = function(v) self.IDTR = v end,
         [25] = function(v) self.CMPR = v end,
+        [26] = function(v) end, -- XEIP
         [27] = function(v) self.LADD = v end,
         [28] = function(v) self.LINT = v end,
+        [29] = function(v) end, -- TMR
+        [30] = function(v) end, -- TIMER
+        [31] = function(v) end, -- CPAGE
         [32] = function(v) self.interrupt_flag = v end,
+        [33] = function(v) end, -- PF
         [34] = function(v) self.extended_flag = v end,
+        [35] = function(v) end, -- NIF
         [36] = function(v) self.extended_memory_flag = v end,
         [37] = function(v) self.PTBL = v end,
-        [38] = function(v) self.PTBE = v end
+        [38] = function(v) self.PTBE = v end,
+        [39] = function(v) end, -- PCAP
+        [40] = function(v) end, -- RQCAP
+        [41] = function(v) end, -- PPAGE
+        [42] = function(v) end, -- MEMRQ
+        [43] = function(v) end, -- Memory Model
+        [44] = function(v) end, -- External
+        [45] = function(v) end, -- Buslock
+        [46] = function(v) end, -- Idle
+        [47] = function(v) end, -- INTR
+        [48] = function(v) end, -- Serial Number
+        [49] = function(v) end, -- Code Bytes
+        [50] = function(v) end, -- BPREC
+        [51] = function(v) end, -- IPREC
+        [52] = function(v) end, -- NIDT
+        [53] = function(v) self.BLOCKSTART = v end,
+        [54] = function(v) self.BLOCKSIZE = v end,
+        [55] = function(v) end, -- VMODE
+        [56] = function(v) end, -- XTRL
+        [57] = function(v) end, -- HaltPort
+        [58] = function(v) end, -- HWDEBUG
+        [59] = function(v) end, -- DBGSTATE
+        [60] = function(v) end, -- DBGADDR
+        [61] = function(v) end, -- CRL
+        [62] = function(v) end, -- TIMERDT
+        [63] = function(v) end, -- MEMADDR
+        [64] = function(v) end, -- TimerMode
+        [65] = function(v) end, -- TimerRate
+        [66] = function(v) end, -- TimerPrevTime
+        [67] = function(v) end, -- TimerAddress
+        [68] = function(v) end, -- TimerPrevMode
+        [69] = function(v) end, -- LASTQUO
+        [70] = function(v) end, -- QUOFLAG
+        [71] = function(v) self.PreqOperand1 = v end,
+        [72] = function(v) self.PreqOperand2 = v end,
+        [73] = function(v) self.PreqReturn = v end,
+        [74] = function(v) self.PreqHandled = v end,
     }
     if setters[index] then
         setters[index](value)
@@ -424,9 +720,19 @@ function VM:SetInternalRegister(index, value)
     end
 end
 
+
 function VM:step()
     if self.interrupt_flag ~= 0 then return end
     self.XEIP = self.IP
+    self.PreviousPage = self.CurrentPage
+    self.CurrentPage = self.Pages[math.floor(self.XEIP / 128)]
+    if self.interrupt_flag ~= 0 then return end
+
+    if self.PCAP ~= 0 and self.CurrentPage.execute == 0 and self.PreviousPage.runlevel > 0 then
+        self:int_vm(ErrorCodes.ERR_EXECUTE_VIOLATION, self.IP)
+        return
+    end
+
     local opcode = self:fetch()
     if self.interrupt_flag ~= 0 then return end
 
@@ -492,6 +798,9 @@ end
 local filename = args[1]
 local file = fs.open(filename, "r")
 
+if not file then
+    error("No file found!", 2)
+end
 
 local content = file.readAll()
 file.close()
@@ -513,3 +822,5 @@ while VM.interrupt_flag == 0 do
     sleep(0.05)
     print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
 end
+
+error("Error: " .. VM.interrupt_flag .. " " .. VM.LADD, 2)

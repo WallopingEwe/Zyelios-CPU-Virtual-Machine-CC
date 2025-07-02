@@ -1,0 +1,227 @@
+local function CLM(vm)
+    vm.extended_memory_flag = 0
+end
+
+local function STM(vm)
+    vm.extended_memory_flag = 1
+end
+
+local function SMAP(vm)
+    local addr, last
+    if vm.BLOCKSIZE ~= 0 then
+        addr = vm.BLOCKSTART
+        last = addr + vm.BLOCKSIZE
+        vm.BLOCKSIZE = 0
+    else
+        addr = op1 * 128
+        last = addr + 127
+    end
+
+    while addr < last do
+        local index = math.floor(addr / 128)
+        local page = vm.Pages[index]
+        if vm.interrupt_flag ~= 0 then return end
+
+        if vm.CurrentPage.runlevel <= page.runlevel then
+            page.remapped = 1
+            page.map = op2
+        else
+            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            return
+        end
+
+        addr = addr + 128
+    end
+end
+
+local function GMAP(vm)
+    if vm.CurrentPage.runlevel ~= 0 then
+        if vm.PreqHandled == 1 then
+            op1 = vm.PreqReturn
+            vm.PreqReturn = 0
+            vm.PreqHandled = 0
+        elseif vm.PreqHandled == 0 then
+            vm:PrivilegeRequest(op1, op2, 132)
+        else
+            vm.PreqHandled = 0
+        end
+    else
+        local index = math.floor(op2 / 128)
+        local page = vm.Pages[index]
+        if vm.interrupt_flag ~= 0 then return end
+
+        op1 = page.map
+    end
+end
+
+local function IRETP(vm)
+    local cs = vm:Pop()
+    if vm.interrupt_flag ~= 0 then return end
+
+    local ip = vm:Pop()
+    if vm.interrupt_flag ~= 0 then return end
+
+    vm.PTBL = op1
+    vm:JMP(ip, cs)
+end
+
+local function EXTRETP(vm)
+end
+
+local function EXTRETPA(vm)
+end
+
+local function SPG(vm)
+    local index = math.floor(op1 / 128)
+    local page = vm.Pages[index]
+    if vm.interrupt_flag ~= 0 then return end
+
+    if vm.CurrentPage.runlevel <= page.runlevel then
+        page.read = 1
+        page.write = 0
+    else
+        vm:int_vm("ERR_PAGE_VIOLATION", index)
+    end
+end
+
+local function CPG(vm)
+    local index = math.floor(op1 / 128)
+    local page = vm.Pages[index]
+    if vm.interrupt_flag ~= 0 then return end
+
+    if vm.CurrentPage.runlevel <= page.runlevel then
+        page.read = 1
+        page.write = 1
+    else
+        vm:int_vm("ERR_PAGE_VIOLATION", index)
+    end
+end
+
+local function TPG(vm)
+end
+
+local function ERPG(vm)
+end
+
+local function WRPG(vm)
+end
+
+local function RDPG(vm)
+end
+
+local function SPP(vm)
+    local addr, last
+    if vm.BLOCKSIZE ~= 0 then
+        addr = vm.BLOCKSTART
+        last = addr + vm.BLOCKSIZE
+        vm.BLOCKSIZE = 0
+    else
+        addr = op1 * 128
+        last = addr + 127
+    end
+
+    while addr < last do
+        local index = math.floor(addr / 128)
+        local page = vm.Pages[index]
+        if vm.interrupt_flag ~= 0 then return end
+
+        if vm.CurrentPage.runlevel <= page.runlevel then
+            local mode = math.floor(op2)
+            if mode == 0 then page.read = 1
+            elseif mode == 1 then page.write = 1
+            elseif mode == 2 then page.execute = 1
+            elseif mode == 3 then page.runlevel = 1 end
+        else
+            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            return
+        end
+
+        addr = addr + 128
+    end
+end
+
+local function CPP(vm)
+    local addr, last
+    if vm.BLOCKSIZE ~= 0 then
+        addr = vm.BLOCKSTART
+        last = addr + vm.BLOCKSIZE
+        vm.BLOCKSIZE = 0
+    else
+        addr = op1 * 128
+        last = addr + 127
+    end
+
+    while addr < last do
+        local index = math.floor(addr / 128)
+        local page = vm.Pages[index]
+        if vm.interrupt_flag ~= 0 then return end
+
+        if vm.CurrentPage.runlevel <= page.runlevel then
+            local mode = math.floor(op2)
+            if mode == 0 then page.read = 0
+            elseif mode == 1 then page.write = 0
+            elseif mode == 2 then page.execute = 0
+            elseif mode == 3 then page.runlevel = 0 end
+        else
+            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            return
+        end
+
+        addr = addr + 128
+    end
+end
+
+local function SRL(vm)
+    local addr, last
+    if vm.BLOCKSIZE ~= 0 then
+        addr = vm.BLOCKSTART
+        last = addr + vm.BLOCKSIZE
+        vm.BLOCKSIZE = 0
+    else
+        addr = op1 * 128
+        last = addr + 127
+    end
+
+    while addr < last do
+        local index = math.floor(addr / 128)
+        local page = vm.Pages[index]
+        if vm.interrupt_flag ~= 0 then return end
+
+        if vm.CurrentPage.runlevel <= page.runlevel then
+            page.runlevel = op2
+        else
+            vm:int_vm("ERR_PAGE_VIOLATION", index)
+            return
+        end
+
+        addr = addr + 128
+    end
+end
+
+local function CRL(vm)
+    local index = math.floor(op2 / 128)
+    local page = vm.Pages[index]
+    if vm.interrupt_flag ~= 0 then return end
+
+    op1 = page.runlevel
+end
+
+return {
+    { 119, 0, CLM, "CLM" },
+    { 118, 0, STM, "STM" },
+    { 131, 2, SMAP, "SMAP" },
+    { 132, 2, GMAP, "GMAP" },
+    { 136, 2, IRETP, "IRETP" },
+    { 137, 2, EXTRETP, "EXTRETP" },
+    { 141, 2, EXTRETPA, "EXTRETPA" },
+    { 28, 1, SPG, "SPG" },
+    { 29, 1, CPG, "CPG" },
+    { 93, 1, TPG, "TPG" },
+    { 95, 1, ERPG, "ERPG" },
+    { 96, 1, WRPG, "WRPG" },
+    { 97, 1, RDPG, "RDPG" },
+    { 122, 2, SPP, "SPP" },
+    { 123, 2, CPP, "CPP" },
+    { 124, 2, SRL, "SRL" },
+    { 125, 2, CRL, "CRL" }
+}

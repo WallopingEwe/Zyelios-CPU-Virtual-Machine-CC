@@ -1,5 +1,5 @@
 local function END(vm) 
-    vm.int_vm(ERR_END_EXECUTION, vm.IP);
+    vm:int_vm(ERR_END_EXECUTION, vm.IP);
 end
 
 local function CPUID(vm)
@@ -116,7 +116,7 @@ local function XOR(vm)
 end
 
 local function INT(vm)
-    vm.int_vm(op1, 0);
+    vm:int_vm(op1, 0);
 end
 
 local function STI(vm)
@@ -167,11 +167,11 @@ local function TIMER(vm)
 end
 
 local function CPUGET(vm)
-    op1 = vm.GetInternalRegister(op2);
+    op1 = vm:GetInternalRegister(op2);
 end
 
 local function CPUSET(vm)
-    vm.SetInternalRegister(op1, op2);
+    vm:SetInternalRegister(op1, op2);
 end
 
 local function LEA(vm)
