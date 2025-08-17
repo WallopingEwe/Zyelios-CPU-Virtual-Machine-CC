@@ -43,7 +43,7 @@ local function POPA(vm)
 end
 
 local function RSTACK(vm) 
-    if (op2 < 0 or op2 >= VM.MEMORY_MODEL) then
+    if (op2 < 0 or op2 >= vm.MEMORY_MODEL) then
         vm:int_vm(ERR_STACK_ERROR, op2);
         return;
     end
@@ -55,7 +55,7 @@ local function RSTACK(vm)
 end
 
 local function SSTACK(vm) 
-    if (op1 < 0 or op1 >= MEMORY_MODEL) then
+    if (op1 < 0 or op1 >= vm.MEMORY_MODEL) then
         vm:int_vm(ERR_STACK_ERROR, op1);
         return;
     end
