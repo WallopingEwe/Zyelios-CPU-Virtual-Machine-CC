@@ -44,11 +44,11 @@ end
 
 local function RSTACK(vm) 
     if (op2 < 0 or op2 >= vm.MEMORY_MODEL) then
-        vm:int_vm(ERR_STACK_ERROR, op2);
+        vm:int_vm(vm.ErrorCodes.ERR_STACK_ERROR, op2);
         return;
     end
 
-    local val = vm.ReadCell(vm.SS + op2);
+    local val = vm:ReadCell(vm.SS + op2);
     if (vm.interrupt_flag) then return end
 
     op1 = val;
@@ -56,11 +56,11 @@ end
 
 local function SSTACK(vm) 
     if (op1 < 0 or op1 >= vm.MEMORY_MODEL) then
-        vm:int_vm(ERR_STACK_ERROR, op1);
+        vm:int_vm(vm.ErrorCodes.ERR_STACK_ERROR, op1);
         return;
     end
     
-    vm.WriteCell(vm.SS + op1, op2);
+    vm:WriteCell(vm.SS + op1, op2);
 end
 
 local function ENTER(vm) 

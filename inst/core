@@ -219,16 +219,16 @@ local function MXCHG(vm)
     local edi_cache;
     
     for i = 0,op1,1 do
-        esi_cache = vm.ReadCell(vm.ESI);
+        esi_cache = vm:ReadCell(vm.ESI);
         if (vm.interrupt_flag) then return end;
 
-        edi_cache = vm.ReadCell(vm.EDI);
+        edi_cache = vm:ReadCell(vm.EDI);
         if (vm.interrupt_flag) then return end;
 
-        vm.WriteCell(vm.ESI, edi_cache);
+        vm:WriteCell(vm.ESI, edi_cache);
         if (vm.interrupt_flag) then return end;
 
-        vm.WriteCell(vm.EDI, esi_cache);
+        vm:WriteCell(vm.EDI, esi_cache);
         if (vm.interrupt_flag) then return end;
 
         vm.ESI = vm.ESI + 1;
