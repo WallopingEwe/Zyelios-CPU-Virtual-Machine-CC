@@ -512,7 +512,7 @@ function VM:GetOperand(rm, segment)
         return value, memory_setter(addr + seg)
     end
     
-    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, 0)
+    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, rm)
     return nil, nil
 end
 
