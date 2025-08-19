@@ -8,37 +8,37 @@ end
 
 local function PUSHA(vm) 
     vm:Push(vm.EDI);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.ESI);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.EBP);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.ESP);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.EDX);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.ECX);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.EBX);
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Push(vm.EAX);
 end
 
 local function POPA(vm) 
     vm.EAX = vm:Pop();
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm.EBX = vm:Pop();
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm.ECX = vm:Pop();
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm.EDX = vm:Pop();
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm:Pop(); -- ESP
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm.EBP = vm:Pop();
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm.ESI = vm:Pop();
-    if (vm.interrupt_flag) then return end
+    if (vm.interrupt_flag ~= 0) then return end
     vm.EDI = vm:Pop();
 end
 
@@ -49,12 +49,12 @@ local function RSTACK(vm)
     end
 
     local val = vm:ReadCell(vm.SS + op2);
-    if (vm.interrupt_flag) then return end
 
+    if (vm.interrupt_flag ~= 0) then return end
     op1 = val;
 end
 
-local function SSTACK(vm) 
+local function SSTACK(vm)
     if (op1 < 0 or op1 >= vm.MEMORY_MODEL) then
         vm:int_vm(vm.ErrorCodes.ERR_STACK_ERROR, op1);
         return;

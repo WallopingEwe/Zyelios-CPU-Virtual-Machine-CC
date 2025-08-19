@@ -24,6 +24,15 @@ VM.ErrorCodes = {
     ERR_PAGE_TRAPPED = 30
 }
 
+do
+    local reverse = {}
+    for k,v in pairs(VM.ErrorCodes) do
+        reverse[k] = v
+        reverse[v] = k
+    end
+    VM.ErrorCodes = reverse
+end
+
 VM.Memory = {}
 VM.MEMORY_MODEL = 65536
 for i = 0, VM.MEMORY_MODEL do
@@ -287,7 +296,7 @@ end
 
 function VM:Push(n)
     self.ESP = self.ESP - 1
-    local v = self:WriteCell(self.ESP + self.SS)
+    local v = self:WriteCell(self.ESP + self.SS, n)
     if self.interrupt_flag ~= 0 then return end
 
     if self.ESP < 0 then
@@ -477,12 +486,12 @@ function VM:GetOperand(rm, segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
         return value, memory_setter(addr + seg)
     elseif rm == 50 then
-        local seg = self:GetSegment(segment)
+        local seg,ind = self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
         local immediate = self:fetch()
         if self.interrupt_flag ~= 0 then return nil, nil end
         local value = immediate + seg
-        return value, function() end
+        return value, register_setter(ind)
     elseif rm >= 2048 and rm <= 2079 then
         local index = rm - 2048
         return self.R[index], function(value) self.R[index] = value end
@@ -503,7 +512,7 @@ function VM:GetOperand(rm, segment)
         return value, memory_setter(addr + seg)
     end
     
-    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, 0)
+    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, rm)
     return nil, nil
 end
 
@@ -534,25 +543,25 @@ end
 
 function VM:GetSegment(index)
     local segments = {
-        [1] = function() return self.CS end,
-        [2] = function() return self.SS end,
-        [3] = function() return self.DS end,
-        [4] = function() return self.ES end,
-        [5] = function() return self.GS end,
-        [6] = function() return self.FS end,
-        [7] = function() return self.KS end,
-        [8] = function() return self.LS end,
-        [9] = function() return self.EAX end,
-        [10] = function() return self.EBX end,
-        [11] = function() return self.ECX end,
-        [12] = function() return self.EDX end,
-        [13] = function() return self.ESI end,
-        [14] = function() return self.EDI end,
-        [15] = function() return self.ESP end,
-        [16] = function() return self.EBP end
+        [1] = function() return self.CS, 16 end,
+        [2] = function() return self.SS, 17 end,
+        [3] = function() return self.DS, 18 end,
+        [4] = function() return self.ES, 19 end,
+        [5] = function() return self.GS, 20 end,
+        [6] = function() return self.FS, 21 end,
+        [7] = function() return self.KS, 22 end,
+        [8] = function() return self.LS, 23 end,
+        [9] = function() return self.EAX, 1 end,
+        [10] = function() return self.EBX, 2 end,
+        [11] = function() return self.ECX, 3 end,
+        [12] = function() return self.EDX, 4 end,
+        [13] = function() return self.ESI, 5 end,
+        [14] = function() return self.EDI, 6 end,
+        [15] = function() return self.ESP, 7 end,
+        [16] = function() return self.EBP, 8 end
     }
     if segments[index] then return segments[index]() end
-    if index >= 17 and index <= 47 then return self.R[index - 17] end
+    if index >= 17 and index <= 47 then return self.R[index - 17], index end
     self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
     return nil
 end
@@ -736,8 +745,7 @@ function VM:step()
         opcode = opcode - 2000
     end
 
-    local instr = Instructions[opcode]
-
+    local instr = Instructions[opcode%1000]
     if not instr then
         self:int_vm(self.ErrorCodes.ERR_UNKNOWN_OPCODE, opcode)
         return
@@ -819,4 +827,4 @@ while VM.interrupt_flag == 0 do
     print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
 end
 
-error("Error: " .. VM.interrupt_flag .. " " .. VM.LADD, 2)
+error("Error: " .. VM.interrupt_flag .. "("..VM.ErrorCodes[VM.interrupt_flag]..")" .. " " .. VM.LADD,0)
