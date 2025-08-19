@@ -296,7 +296,7 @@ end
 
 function VM:Push(n)
     self.ESP = self.ESP - 1
-    local v = self:WriteCell(self.ESP + self.SS)
+    local v = self:WriteCell(self.ESP + self.SS, n)
     if self.interrupt_flag ~= 0 then return end
 
     if self.ESP < 0 then
