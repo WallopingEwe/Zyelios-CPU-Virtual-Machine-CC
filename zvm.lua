@@ -561,7 +561,7 @@ function VM:GetSegment(index)
         [16] = function() return self.EBP, 8 end
     }
     if segments[index] then return segments[index]() end
-    if index >= 17 and index <= 47 then return self.R[index - 17] end
+    if index >= 17 and index <= 47 then return self.R[index - 17], index end
     self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
     return nil
 end
@@ -745,8 +745,7 @@ function VM:step()
         opcode = opcode - 2000
     end
 
-    local instr = Instructions[opcode]
-
+    local instr = Instructions[opcode%1000]
     if not instr then
         self:int_vm(self.ErrorCodes.ERR_UNKNOWN_OPCODE, opcode)
         return
@@ -828,4 +827,4 @@ while VM.interrupt_flag == 0 do
     print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
 end
 
-error("Error: " .. VM.interrupt_flag .. " " .. VM.LADD, 2)
+error("Error: " .. VM.interrupt_flag .. "("..VM.ErrorCodes[VM.interrupt_flag]..")" .. " " .. VM.LADD,0)
