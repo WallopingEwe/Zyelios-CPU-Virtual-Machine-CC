@@ -95,10 +95,10 @@ end
 
 local function RETF(vm)
     local ip = vm:Pop();
-    if (vm.interrupt_flag) then return end;
+    if (vm.interrupt_flag ~= 0) then return end;
 
     local cs = vm:Pop();
-    if (vm.interrupt_flag) then return end;
+    if (vm.interrupt_flag ~= 0) then return end;
 
     vm:JMP(ip, cs);
 end
@@ -137,7 +137,7 @@ end
 
 local function RET(vm)
     local ip = vm:Pop();
-    if (vm.interrupt_flag) then return end;
+    if (vm.interrupt_flag ~= 0) then return end;
 
     vm:JMP(ip);
 end
@@ -207,10 +207,10 @@ local function MCOPY(vm)
 
     for i = 0,op1,1 do
         v = vm:ReadCell(i + vm.ESI);
-        if (vm.interrupt_flag) then return end;
+        if (vm.interrupt_flag ~= 0) then return end;
 
         vm:WriteCell(i + vm.EDI, v);
-        if (vm.interrupt_flag) then return end;
+        if (vm.interrupt_flag ~= 0) then return end;
     end
 end
 
@@ -219,17 +219,17 @@ local function MXCHG(vm)
     local edi_cache;
     
     for i = 0,op1,1 do
-        esi_cache = vm:ReadCell(vm.ESI);
-        if (vm.interrupt_flag) then return end;
+        esi_cache = vm.ReadCell(vm.ESI);
+        if (vm.interrupt_flag ~= 0) then return end;
 
-        edi_cache = vm:ReadCell(vm.EDI);
-        if (vm.interrupt_flag) then return end;
+        edi_cache = vm.ReadCell(vm.EDI);
+        if (vm.interrupt_flag ~= 0) then return end;
 
         vm:WriteCell(vm.ESI, edi_cache);
-        if (vm.interrupt_flag) then return end;
+        if (vm.interrupt_flag ~= 0) then return end;
 
         vm:WriteCell(vm.EDI, esi_cache);
-        if (vm.interrupt_flag) then return end;
+        if (vm.interrupt_flag ~= 0) then return end;
 
         vm.ESI = vm.ESI + 1;
         vm.EDI = vm.EDI + 1;

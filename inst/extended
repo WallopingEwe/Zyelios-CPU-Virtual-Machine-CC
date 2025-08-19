@@ -16,10 +16,10 @@ end
 
 local function IRET(vm) 
     local cs = vm:Pop()
-    if(vm.interrupt_flag) then return end
+    if(vm.interrupt_flag ~= 0) then return end
 
     local ip = vm:Pop();
-    if(vm.interrupt_flag) then return end
+    if(vm.interrupt_flag ~= 0) then return end
     
     vm:JMP(ip, cs);
 end
