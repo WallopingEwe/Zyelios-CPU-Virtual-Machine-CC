@@ -543,22 +543,22 @@ end
 
 function VM:GetSegment(index)
     local segments = {
-        [1] = function() return self.CS end,
-        [2] = function() return self.SS end,
-        [3] = function() return self.DS end,
-        [4] = function() return self.ES end,
-        [5] = function() return self.GS end,
-        [6] = function() return self.FS end,
-        [7] = function() return self.KS end,
-        [8] = function() return self.LS end,
-        [9] = function() return self.EAX end,
-        [10] = function() return self.EBX end,
-        [11] = function() return self.ECX end,
-        [12] = function() return self.EDX end,
-        [13] = function() return self.ESI end,
-        [14] = function() return self.EDI end,
-        [15] = function() return self.ESP end,
-        [16] = function() return self.EBP end
+        [1] = function() return self.CS, 16 end,
+        [2] = function() return self.SS, 17 end,
+        [3] = function() return self.DS, 18 end,
+        [4] = function() return self.ES, 19 end,
+        [5] = function() return self.GS, 20 end,
+        [6] = function() return self.FS, 21 end,
+        [7] = function() return self.KS, 22 end,
+        [8] = function() return self.LS, 23 end,
+        [9] = function() return self.EAX, 1 end,
+        [10] = function() return self.EBX, 2 end,
+        [11] = function() return self.ECX, 3 end,
+        [12] = function() return self.EDX, 4 end,
+        [13] = function() return self.ESI, 5 end,
+        [14] = function() return self.EDI, 6 end,
+        [15] = function() return self.ESP, 7 end,
+        [16] = function() return self.EBP, 8 end
     }
     if segments[index] then return segments[index]() end
     if index >= 17 and index <= 47 then return self.R[index - 17] end
