@@ -24,6 +24,15 @@ VM.ErrorCodes = {
     ERR_PAGE_TRAPPED = 30
 }
 
+do
+    local reverse = {}
+    for k,v in pairs(VM.ErrorCodes) do
+        reverse[k] = v
+        reverse[v] = k
+    end
+    VM.ErrorCodes = reverse
+end
+
 VM.Memory = {}
 VM.MEMORY_MODEL = 65536
 for i = 0, VM.MEMORY_MODEL do
