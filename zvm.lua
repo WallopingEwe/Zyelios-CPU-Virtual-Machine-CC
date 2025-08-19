@@ -486,12 +486,12 @@ function VM:GetOperand(rm, segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
         return value, memory_setter(addr + seg)
     elseif rm == 50 then
-        local seg = self:GetSegment(segment)
+        local seg,ind = self:GetSegment(segment)
         if self.interrupt_flag ~= 0 then return nil, nil end
         local immediate = self:fetch()
         if self.interrupt_flag ~= 0 then return nil, nil end
         local value = immediate + seg
-        return value, function() end
+        return value, register_setter(ind)
     elseif rm >= 2048 and rm <= 2079 then
         local index = rm - 2048
         return self.R[index], function(value) self.R[index] = value end
