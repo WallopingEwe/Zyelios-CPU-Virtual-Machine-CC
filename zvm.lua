@@ -87,7 +87,7 @@ for i = 0, 31 do
 end
 VM.creation_time = os.clock()
 
-VM.ExternalMemory = peripheral.wrap("address_bus") or _G.address_bus
+VM.ExternalMemory = nil
 
 
 local pages = {}
@@ -826,7 +826,130 @@ local file = fs.open(filename, "r")
 if not file then
     error("No file found!", 2)
 end
+local chunk1
+local chunk2
+local chunk3
+local chunk4
+local function loadChunk(chunkname)
+    local mode = "r+"
+    if not fs.exists(chunkname) then
+        mode = "w+"
+    end
+    local chunk = fs.open(chunkname,mode)
+    table.insert(files,chunk)
+    -- chunk read write code
+    local index = 0
+    local chunkObj = {}
+    function chunkObj:ReadCell(address)
+        if address*8 ~= index then
+            index = (address*8)+8 -- for after the operation
+            chunk.seek("set",address*8)
+        end
+        return string.unpack("d",chunk.read(8))
+    end
+    function chunkObj:WriteCell(address,value)
+        if address*8 ~= index then
+            index = (address*8)+8 -- for after the operation
+            chunk.seek("set",address*8)
+        end
+        chunk.write(string.pack("d",value))
+        return true
+    end
+    return chunkObj
+end
+if quickArgs.chunk1 or quickArgs.chunk then
+    chunk1 = loadChunk(quickArgs.chunk1 or quickArgs.chunk)
+end
+if quickArgs.chunk2 then
+    chunk2 = loadChunk(quickArgs.chunk2)
+end
+if quickArgs.chunk3 then
+    chunk3 = loadChunk(quickArgs.chunk3)
+end
+if quickArgs.chunk4 then
+    chunk4 = loadChunk(quickArgs.chunk4)
+end
 
+local available_devs = {
+    chunk=chunk1,
+    chunk1=chunk1,
+    chunk2=chunk2,
+    chunk3=chunk3,
+    chunk4=chunk4,
+}
+
+if quickArgs.lddev1 or quickArgs.lddev then
+    available_devs.dev1 = loadfile(shell.resolve(quickArgs.lddev or quickArgs.lddev1))()
+end
+if quickArgs.lddev2 then
+    available_devs.dev2 = loadfile(shell.resolve(quickArgs.lddev2))()
+end
+if quickArgs.lddev3 then
+    available_devs.dev3 = loadfile(shell.resolve(quickArgs.lddev3))()
+end
+if quickArgs.lddev4 then
+    available_devs.dev4 = loadfile(shell.resolve(quickArgs.lddev4))()
+end
+
+do
+    local memory = {}
+    local regions = {}
+
+    local function lookup(addr)
+        for ind,i in pairs(regions) do
+            if i and addr >= i[1] and addr <= i[2] then
+                return memory[ind],regions[ind][1]
+            end
+        end
+    end
+    _G.address = {memory=memory,regions=regions}
+    local function ReadCell(_,addr)
+        local mem,offset = lookup(addr)
+        if not mem then return false end
+        return mem:ReadCell(addr-offset)
+    end
+
+    local function WriteCell(_,addr,v)
+        local mem,offset = lookup(addr)
+        if not mem then return false end
+        return mem:WriteCell(addr-offset,v)
+    end
+    if quickArgs.addressbus then
+        if quickArgs.ab1dev and quickArgs.ab1s and quickArgs.ab1e then
+            if available_devs[quickArgs.ab1dev] then
+                regions[1] = {quickArgs.ab1s,quickArgs.ab1e}
+                memory[1] = available_devs[quickArgs.ab1dev]
+            else
+                error("Failed to set up address bus device 1, device missing.")
+            end
+        end
+        if quickArgs.ab2dev and quickArgs.ab2s and quickArgs.ab2e then
+            if available_devs[quickArgs.ab2dev] then
+                regions[2] = {quickArgs.ab2s,quickArgs.ab2e}
+                memory[2] = available_devs[quickArgs.ab2dev]
+            else
+                error("Failed to set up address bus device 2, device missing.")
+            end
+        end
+        if quickArgs.ab3dev and quickArgs.ab3s and quickArgs.ab3e then
+            if available_devs[quickArgs.ab3dev] then
+                regions[3] = {quickArgs.ab3s,quickArgs.ab3e}
+                memory[3] = available_devs[quickArgs.ab3dev]
+            else
+                error("Failed to set up address bus device 3, device missing.")
+            end
+        end
+        if quickArgs.ab4dev and quickArgs.ab4s and quickArgs.ab4e then
+            if available_devs[quickArgs.ab4dev] then
+                regions[4] = {quickArgs.ab4s,quickArgs.ab4e}
+                memory[4] = available_devs[quickArgs.ab4dev]
+            else
+                error("Failed to set up address bus device 4, device missing.")
+            end
+        end
+        VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell}
+    end
+end
 local content = file.readAll()
 file.close()
 
@@ -869,6 +992,9 @@ else
         --print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
     end
 end
+
+for ind,i in ipairs(files) do
+    if i and i.close then i.close() end
 end
 
 error("Error: " .. VM.interrupt_flag .. "("..VM.ErrorCodes[VM.interrupt_flag]..")" .. " " .. VM.LADD,0)
