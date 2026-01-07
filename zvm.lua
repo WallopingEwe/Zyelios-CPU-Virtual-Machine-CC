@@ -2,6 +2,26 @@ local args = { ... }
 if not args[1] then
     error("Requires a filename to execute",0)
 end
+local quickArgs = {}
+do
+    local prevArg
+    for ind,i in ipairs(args) do
+        if string.match(i,"^%-") then
+            if prevArg then
+                quickArgs[prevArg] = true
+                prevArg = nil
+            end
+            prevArg = string.sub(i,2)
+        elseif prevArg then
+            quickArgs[prevArg] = tonumber(i) or i
+            prevArg = nil
+        end
+    end
+    if prevArg then
+        quickArgs[prevArg] = true
+        prevArg = nil
+    end
+end
 local VM = {}
 
 VM.ErrorCodes = {
@@ -67,7 +87,7 @@ for i = 0, 31 do
 end
 VM.creation_time = os.clock()
 
-VM.ExternalMemory = peripheral.wrap("address_bus") or _G.address_bus
+VM.ExternalMemory = nil
 
 
 local pages = {}
@@ -448,164 +468,191 @@ function VM:fetch()
     return value
 end
 
-function VM:GetOperand(rm, segment)
-    local function memory_setter(addr)
+local REGISTER_LOOKUP = {
+	"EAX","EBX","ECX","EDX","ESI","EDI","ESP","EBP", -- General Registers 1-8
+	"CS","SS","DS","ES","GS","FS","KS","LS", -- Segments 9-16
+}
+do
+    local function const_getter(const)
+        return function() return const end
+    end
+    local function memory_getter(addr_getter)
+        return function()
+            return VM:ReadCell(addr_getter())
+        end
+    end
+    local function segreg_getter(reg_rm,seg_rm)
+        return function()
+            local reg = VM:GetRegister(reg_rm)
+            if VM.interrupt_flag ~= 0 then return 0 end
+            local seg = seg_rm == -1 and VM.DS or VM:GetSegment(seg_rm)
+            if VM.interrupt_flag ~= 0 then return 0 end
+            return reg+seg
+        end
+    end
+    local function segextreg_getter(reg_rm,seg_rm)
+        local seg = seg_rm == -1 and VM.DS or VM:GetSegment(seg_rm)
+        if VM.interrupt_flag ~= 0 then return end
+        return VM.R[reg_rm]()+seg
+    end
+    local function segconst_getter(const_rm,seg_rm)
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
+        return function()
+            if VM.interrupt_flag ~= 0 then return end
+            return const_rm+seg()
+        end
+    end
+    local function memory_setter(addr_getter)
         return function(value)
-            self:WriteCell(addr, value)
+            VM:WriteCell(addr_getter(), value)
         end
     end
     local function register_setter(index)
+        local reg = REGISTER_LOOKUP[index]
+        if not reg or not VM[reg] then VM:int_vm(VM.ErrorCodes.ERR_PROCESSOR_FAULT,index+0.222) end
         return function(value)
-            self:SetInternalRegister(index, value)
+            VM[reg] = value
         end
     end
-
-    if rm == 0 then
-        local immediate = self:fetch()
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        return immediate, function() end
-    elseif rm <= 16 then
-        local value = self:GetRegister(rm)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, register_setter(rm)
-    elseif rm >= 17 and rm <= 24 then
-        local reg = self:GetRegister(rm - 16)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local addr = reg
-        local seg = segment == -1 and self.DS or self:GetSegment(segment)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr + seg)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr + seg)
-    elseif rm == 25 then
-        local addr = self:fetch()
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local seg = segment == -1 and self.DS or self:GetSegment(segment)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr + seg)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr + seg)
-    elseif rm == 50 then
-        local seg,ind = self:GetSegment(segment)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local immediate = self:fetch()
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = immediate + seg
-        return value, register_setter(ind)
-    elseif rm >= 2048 and rm <= 2079 then
-        local index = rm - 2048
-        return self.R[index], function(value) self.R[index] = value end
-    elseif rm >= 2080 and rm <= 2111 then
-        local addr = self.R[rm - 2080]
-        local seg = segment == -1 and self.DS or self:GetSegment(segment)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr + seg)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr + seg)
-    elseif rm >= 2144 and rm <= 2175 then
-        local addr = self:fetch()
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local seg = segment == -1 and self.DS or self:GetSegment(segment)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        local value = self:ReadCell(addr + seg)
-        if self.interrupt_flag ~= 0 then return nil, nil end
-        return value, memory_setter(addr + seg)
+    local function register_getter(rm)
+        return function()
+            local reg = VM:GetRegister(rm)
+            if VM.interrupt_flag ~= 0 then return end
+            return reg
+        end
     end
-    
-    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, rm)
-    return nil, nil
+    function VM:GetOperand(rm, segment)
+        if rm == 0 then
+            local immediate = self:fetch()
+            if self.interrupt_flag ~= 0 then return nil, nil end
+            return const_getter(immediate), function() end
+        elseif rm <= 16 then
+            return register_getter(rm), register_setter(rm)
+        elseif rm >= 17 and rm <= 24 then
+            local seg_getter = segreg_getter(rm - 16, segment)
+            if self.interrupt_flag ~= 0 then return nil, nil end
+            return memory_getter(seg_getter), memory_setter(seg_getter)
+        elseif rm == 25 then
+            local addr = self:fetch()
+            if self.interrupt_flag ~= 0 then return nil, nil end
+            local seg_getter = segconst_getter(addr, segment)
+            if self.interrupt_flag ~= 0 then return nil, nil end
+            return memory_getter(seg_getter), memory_setter(seg_getter)
+        elseif rm == 50 then
+            local immediate = self:fetch()
+            if self.interrupt_flag ~= 0 then return nil, nil end
+            return segconst_getter(immediate, segment), function() end
+        elseif rm >= 2048 and rm <= 2079 then
+            local index = rm - 2048
+            return function() return self.R[index] end, function(value) self.R[index] = value end
+        elseif rm >= 2080 and rm <= 2111 then
+            local seg_getter = segextreg_getter(rm - 2080, segment)
+            if self.interrupt_flag ~= 0 then return nil, nil end
+            return memory_getter(seg_getter), memory_setter(seg_getter)
+        end
+        
+        self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, rm)
+        return nil, nil
+    end
 end
-
-function VM:GetRegister(index)
+do
     local registers = {
-        [1] = function() return self.EAX end,
-        [2] = function() return self.EBX end,
-        [3] = function() return self.ECX end,
-        [4] = function() return self.EDX end,
-        [5] = function() return self.ESI end,
-        [6] = function() return self.EDI end,
-        [7] = function() return self.ESP end,
-        [8] = function() return self.EBP end,
-        [9] = function() return self.CS end,
-        [10] = function() return self.SS end,
-        [11] = function() return self.DS end,
-        [12] = function() return self.ES end,
-        [13] = function() return self.GS end,
-        [14] = function() return self.FS end,
-        [15] = function() return self.KS end,
-        [16] = function() return self.LS end
+        [1] = function() return VM.EAX end,
+        [2] = function() return VM.EBX end,
+        [3] = function() return VM.ECX end,
+        [4] = function() return VM.EDX end,
+        [5] = function() return VM.ESI end,
+        [6] = function() return VM.EDI end,
+        [7] = function() return VM.ESP end,
+        [8] = function() return VM.EBP end,
+        [9] = function() return VM.CS end,
+        [10] = function() return VM.SS end,
+        [11] = function() return VM.DS end,
+        [12] = function() return VM.ES end,
+        [13] = function() return VM.GS end,
+        [14] = function() return VM.FS end,
+        [15] = function() return VM.KS end,
+        [16] = function() return VM.LS end
     }
-    local reg = registers[index]
-    if reg then return reg() end
-    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
-    return nil
+    function VM:GetRegister(index)
+        local reg = registers[index]
+        if reg then return reg() end
+        self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
+        return nil
+    end
 end
 
-function VM:GetSegment(index)
+do
     local segments = {
-        [1] = function() return self.CS, 16 end,
-        [2] = function() return self.SS, 17 end,
-        [3] = function() return self.DS, 18 end,
-        [4] = function() return self.ES, 19 end,
-        [5] = function() return self.GS, 20 end,
-        [6] = function() return self.FS, 21 end,
-        [7] = function() return self.KS, 22 end,
-        [8] = function() return self.LS, 23 end,
-        [9] = function() return self.EAX, 1 end,
-        [10] = function() return self.EBX, 2 end,
-        [11] = function() return self.ECX, 3 end,
-        [12] = function() return self.EDX, 4 end,
-        [13] = function() return self.ESI, 5 end,
-        [14] = function() return self.EDI, 6 end,
-        [15] = function() return self.ESP, 7 end,
-        [16] = function() return self.EBP, 8 end
+        [1] = function() return VM.CS, 16 end,
+        [2] = function() return VM.SS, 17 end,
+        [3] = function() return VM.DS, 18 end,
+        [4] = function() return VM.ES, 19 end,
+        [5] = function() return VM.GS, 20 end,
+        [6] = function() return VM.FS, 21 end,
+        [7] = function() return VM.KS, 22 end,
+        [8] = function() return VM.LS, 23 end,
+        [9] = function() return VM.EAX, 1 end,
+        [10] = function() return VM.EBX, 2 end,
+        [11] = function() return VM.ECX, 3 end,
+        [12] = function() return VM.EDX, 4 end,
+        [13] = function() return VM.ESI, 5 end,
+        [14] = function() return VM.EDI, 6 end,
+        [15] = function() return VM.ESP, 7 end,
+        [16] = function() return VM.EBP, 8 end
     }
-    if segments[index] then return segments[index]() end
-    if index >= 17 and index <= 47 then return self.R[index - 17], index end
-    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
-    return nil
+    local function r_seg_getter(ind)
+        return function()
+            return VM.R[ind],ind
+        end
+    end
+    function VM:GetSegment(index)
+        if segments[index] then return segments[index] end
+        if index >= 17 and index <= 47 then return r_seg_getter(index - 17) end
+        self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
+        return nil
+    end
 end
-
-function VM:GetInternalRegister(index)
+do
     local registers = {
-        [0] = self.IP,
-        [1] = self.EAX,
-        [2] = self.EBX,
-        [3] = self.ECX,
-        [4] = self.EDX,
-        [5] = self.ESI,
-        [6] = self.EDI,
-        [7] = self.ESP,
-        [8] = self.EBP,
-        [9] = self.ESZ,
-        [16] = self.CS,
-        [17] = self.SS,
-        [18] = self.DS,
-        [19] = self.ES,
-        [20] = self.GS,
-        [21] = self.FS,
-        [22] = self.KS,
-        [23] = self.LS,
-        [24] = self.IDTR,
-        [25] = self.CMPR,
-        [26] = self.XEIP,
-        [27] = self.LADD,
-        [28] = self.LINT,
+        [0] = VM.IP,
+        [1] = VM.EAX,
+        [2] = VM.EBX,
+        [3] = VM.ECX,
+        [4] = VM.EDX,
+        [5] = VM.ESI,
+        [6] = VM.EDI,
+        [7] = VM.ESP,
+        [8] = VM.EBP,
+        [9] = VM.ESZ,
+        [16] = VM.CS,
+        [17] = VM.SS,
+        [18] = VM.DS,
+        [19] = VM.ES,
+        [20] = VM.GS,
+        [21] = VM.FS,
+        [22] = VM.KS,
+        [23] = VM.LS,
+        [24] = VM.IDTR,
+        [25] = VM.CMPR,
+        [26] = VM.XEIP,
+        [27] = VM.LADD,
+        [28] = VM.LINT,
         [29] = 0, -- TMR
         [30] = 0, -- TIMER
         [31] = 0, -- CPAGE
-        [32] = self.interrupt_flag,
+        [32] = VM.interrupt_flag,
         [33] = 0, -- PF
-        [34] = self.extended_flag,
+        [34] = VM.extended_flag,
         [35] = 0, -- NIF
-        [36] = self.extended_memory_flag,
-        [37] = self.PTBL,
-        [38] = self.PTBE,
-        [39] = self.PCAP,
+        [36] = VM.extended_memory_flag,
+        [37] = VM.PTBL,
+        [38] = VM.PTBE,
+        [39] = VM.PCAP,
         [40] = 0, -- RQCAP
         [41] = 0, -- PPAGE
-        [42] = self.MEMRQ,
-        [43] = self.MEMORY_MODEL,
+        [42] = VM.MEMRQ,
+        [43] = VM.MEMORY_MODEL,
         [44] = 0, -- External
         [45] = 0, -- Buslock
         [46] = 0, -- Idle
@@ -615,8 +662,8 @@ function VM:GetInternalRegister(index)
         [50] = 0, -- BPREC
         [51] = 0, -- IPREC
         [52] = 0, -- NIDT
-        [53] = self.BLOCKSTART,
-        [54] = self.BLOCKSIZE,
+        [53] = VM.BLOCKSTART,
+        [54] = VM.BLOCKSIZE,
         [55] = 0, -- VMODE
         [56] = 0, -- XTRL
         [57] = 0, -- HaltPort
@@ -625,7 +672,7 @@ function VM:GetInternalRegister(index)
         [60] = 0, -- DBGADDR
         [61] = 0, -- CRL
         [62] = 0, -- TIMERDT
-        [63] = self.MEMADDR,
+        [63] = VM.MEMADDR,
         [64] = 0, -- TimerMode
         [65] = 0, -- TimerRate
         [66] = 0, -- TimerPrevTime
@@ -633,52 +680,53 @@ function VM:GetInternalRegister(index)
         [68] = 0, -- TimerPrevMode
         [69] = 0, -- LASTQUO
         [70] = 0, -- QUOFLAG
-        [71] = self.PreqOperand1,
-        [72] = self.PreqOperand2,
-        [73] = self.PreqReturn,
-        [74] = self.PreqHandled,
+        [71] = VM.PreqOperand1,
+        [72] = VM.PreqOperand2,
+        [73] = VM.PreqReturn,
+        [74] = VM.PreqHandled,
     }
-    if registers[index] then return registers[index] end
-    if index >= 96 and index <= 126 then return self.R[index - 17] end
-    self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
-    return 0
+    function VM:GetInternalRegister(index)
+        if registers[index] then return registers[index] end
+        if index >= 96 and index <= 126 then return self.R[index - 17] end
+        self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
+        return 0
+    end
 end
-
-function VM:SetInternalRegister(index, value)
+do
     local setters = {
-        [0] = function(v) self:JMP(v, self.CS) end, -- IP
-        [1] = function(v) self.EAX = v end,
-        [2] = function(v) self.EBX = v end,
-        [3] = function(v) self.ECX = v end,
-        [4] = function(v) self.EDX = v end,
-        [5] = function(v) self.ESI = v end,
-        [6] = function(v) self.EDI = v end,
-        [7] = function(v) self.ESP = v end,
-        [8] = function(v) self.EBP = v end,
-        [9] = function(v) self.ESZ = v end,
-        [16] = function(v) self.CS = v end,
-        [17] = function(v) self.SS = v end,
-        [18] = function(v) self.DS = v end,
-        [19] = function(v) self.ES = v end,
-        [20] = function(v) self.GS = v end,
-        [21] = function(v) self.FS = v end,
-        [22] = function(v) self.KS = v end,
-        [23] = function(v) self.LS = v end,
-        [24] = function(v) self.IDTR = v end,
-        [25] = function(v) self.CMPR = v end,
+        [0] = function(v) VM:JMP(v, VM.CS) end, -- IP
+        [1] = function(v) VM.EAX = v end,
+        [2] = function(v) VM.EBX = v end,
+        [3] = function(v) VM.ECX = v end,
+        [4] = function(v) VM.EDX = v end,
+        [5] = function(v) VM.ESI = v end,
+        [6] = function(v) VM.EDI = v end,
+        [7] = function(v) VM.ESP = v end,
+        [8] = function(v) VM.EBP = v end,
+        [9] = function(v) VM.ESZ = v end,
+        [16] = function(v) VM.CS = v end,
+        [17] = function(v) VM.SS = v end,
+        [18] = function(v) VM.DS = v end,
+        [19] = function(v) VM.ES = v end,
+        [20] = function(v) VM.GS = v end,
+        [21] = function(v) VM.FS = v end,
+        [22] = function(v) VM.KS = v end,
+        [23] = function(v) VM.LS = v end,
+        [24] = function(v) VM.IDTR = v end,
+        [25] = function(v) VM.CMPR = v end,
         [26] = function(v) end, -- XEIP
-        [27] = function(v) self.LADD = v end,
-        [28] = function(v) self.LINT = v end,
+        [27] = function(v) VM.LADD = v end,
+        [28] = function(v) VM.LINT = v end,
         [29] = function(v) end, -- TMR
         [30] = function(v) end, -- TIMER
         [31] = function(v) end, -- CPAGE
-        [32] = function(v) self.interrupt_flag = v end,
+        [32] = function(v) VM.interrupt_flag = v end,
         [33] = function(v) end, -- PF
-        [34] = function(v) self.extended_flag = v end,
+        [34] = function(v) VM.extended_flag = v end,
         [35] = function(v) end, -- NIF
-        [36] = function(v) self.extended_memory_flag = v end,
-        [37] = function(v) self.PTBL = v end,
-        [38] = function(v) self.PTBE = v end,
+        [36] = function(v) VM.extended_memory_flag = v end,
+        [37] = function(v) VM.PTBL = v end,
+        [38] = function(v) VM.PTBE = v end,
         [39] = function(v) end, -- PCAP
         [40] = function(v) end, -- RQCAP
         [41] = function(v) end, -- PPAGE
@@ -693,8 +741,8 @@ function VM:SetInternalRegister(index, value)
         [50] = function(v) end, -- BPREC
         [51] = function(v) end, -- IPREC
         [52] = function(v) end, -- NIDT
-        [53] = function(v) self.BLOCKSTART = v end,
-        [54] = function(v) self.BLOCKSIZE = v end,
+        [53] = function(v) VM.BLOCKSTART = v end,
+        [54] = function(v) VM.BLOCKSIZE = v end,
         [55] = function(v) end, -- VMODE
         [56] = function(v) end, -- XTRL
         [57] = function(v) end, -- HaltPort
@@ -711,20 +759,37 @@ function VM:SetInternalRegister(index, value)
         [68] = function(v) end, -- TimerPrevMode
         [69] = function(v) end, -- LASTQUO
         [70] = function(v) end, -- QUOFLAG
-        [71] = function(v) self.PreqOperand1 = v end,
-        [72] = function(v) self.PreqOperand2 = v end,
-        [73] = function(v) self.PreqReturn = v end,
-        [74] = function(v) self.PreqHandled = v end,
+        [71] = function(v) VM.PreqOperand1 = v end,
+        [72] = function(v) VM.PreqOperand2 = v end,
+        [73] = function(v) VM.PreqReturn = v end,
+        [74] = function(v) VM.PreqHandled = v end,
     }
-    if setters[index] then
-        setters[index](value)
-    elseif index >= 96 and index <= 126 then
-        self.R[index - 17] = value
-    else
-        self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
+    function VM:SetInternalRegister(index, value)
+        if setters[index] then
+            setters[index](value)
+        elseif index >= 96 and index <= 126 then
+            self.R[index - 17] = value
+        else
+            self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
+        end
     end
 end
 
+
+VM.instruction_cache = {}
+function VM:cacheInstruction(IP,opfn,op1getter,op2getter,op1setter,op2setter)
+    local cached = {
+        start = self.XEIP+self.CS,
+        size = self.IP-self.XEIP,
+        opfn = opfn,
+        op1_get = op1getter,
+        op2_get = op2getter,
+        op1_set = op1setter,
+        op2_set = op2setter,
+    }
+
+    self.instruction_cache[IP] = cached
+end
 
 function VM:step()
     if self.interrupt_flag ~= 0 then return end
@@ -737,7 +802,20 @@ function VM:step()
         self:int_vm(self.ErrorCodes.ERR_EXECUTE_VIOLATION, self.IP)
         return
     end
+    local cached = self.instruction_cache[self.XEIP + self.CS]
+    if cached then
+        self:fetch() -- like I said before, we need this to determine that the memory is still accessible.
+        if self.interrupt_flag ~= 0 then return end
+        self.IP = (cached.start+cached.size)-self.CS
+        inst_env.op1 = cached.op1_get and cached.op1_get() or nil
+        inst_env.op2 = cached.op2_get and cached.op2_get() or nil
+        inst_env.op1_set = cached.op1_set
+        inst_env.op2_set = cached.op2_set
 
+        if self.interrupt_flag ~= 0 then return end
+        cached.opfn(self)
+        return
+    end
     local opcode = self:fetch()
     if self.interrupt_flag ~= 0 then return end
 
@@ -752,7 +830,8 @@ function VM:step()
     end
 
     if instr[2] == 0 and instr[3] then
-        instr[3](self, 0, function() end)
+        self:cacheInstruction(self.XEIP, instr[3])
+        instr[3](self)
         return
     end
 
@@ -781,31 +860,157 @@ function VM:step()
     end
 
     if instr[2] == 1 then
-        local op1, op1_set = self:GetOperand(rm1, segment1)
+        local op1_get, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
-        inst_env.op1 = op1
+        inst_env.op1 = op1_get()
         inst_env.op1_set = op1_set
+        self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, nil, op1_set, nil)
     else
-        local op1, op1_set = self:GetOperand(rm1, segment1)
+        local op1_get, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
-        local op2, op2_set = self:GetOperand(rm2, segment2)
+        local op2_get, op2_set = self:GetOperand(rm2, segment2)
         if self.interrupt_flag ~= 0 then return end
-        inst_env.op1 = op1
-        inst_env.op2 = op2
+        inst_env.op1 = op1_get()
+        inst_env.op2 = op2_get()
         inst_env.op1_set = op1_set
         inst_env.op2_set = op1_set
+        self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, op2_get, op1_set, op1_set)
     end
     instr[3](self)
 end
 
 
-local filename = args[1]
+local filename = quickArgs.i
+local files = {}
 local file = fs.open(filename, "r")
 
 if not file then
     error("No file found!", 2)
 end
+local chunk1
+local chunk2
+local chunk3
+local chunk4
+local function loadChunk(chunkname)
+    local mode = "r+"
+    if not fs.exists(chunkname) then
+        mode = "w+"
+    end
+    local chunk = fs.open(chunkname,mode)
+    table.insert(files,chunk)
+    -- chunk read write code
+    local index = 0
+    local chunkObj = {}
+    function chunkObj:ReadCell(address)
+        if address*8 ~= index then
+            index = (address*8)+8 -- for after the operation
+            chunk.seek("set",address*8)
+        end
+        return string.unpack("d",chunk.read(8))
+    end
+    function chunkObj:WriteCell(address,value)
+        if address*8 ~= index then
+            index = (address*8)+8 -- for after the operation
+            chunk.seek("set",address*8)
+        end
+        chunk.write(string.pack("d",value))
+        return true
+    end
+    return chunkObj
+end
+if quickArgs.chunk1 or quickArgs.chunk then
+    chunk1 = loadChunk(quickArgs.chunk1 or quickArgs.chunk)
+end
+if quickArgs.chunk2 then
+    chunk2 = loadChunk(quickArgs.chunk2)
+end
+if quickArgs.chunk3 then
+    chunk3 = loadChunk(quickArgs.chunk3)
+end
+if quickArgs.chunk4 then
+    chunk4 = loadChunk(quickArgs.chunk4)
+end
 
+local available_devs = {
+    chunk=chunk1,
+    chunk1=chunk1,
+    chunk2=chunk2,
+    chunk3=chunk3,
+    chunk4=chunk4,
+}
+
+if quickArgs.lddev1 or quickArgs.lddev then
+    available_devs.dev1 = loadfile(shell.resolve(quickArgs.lddev or quickArgs.lddev1))()
+end
+if quickArgs.lddev2 then
+    available_devs.dev2 = loadfile(shell.resolve(quickArgs.lddev2))()
+end
+if quickArgs.lddev3 then
+    available_devs.dev3 = loadfile(shell.resolve(quickArgs.lddev3))()
+end
+if quickArgs.lddev4 then
+    available_devs.dev4 = loadfile(shell.resolve(quickArgs.lddev4))()
+end
+
+do
+    local memory = {}
+    local regions = {}
+
+    local function lookup(addr)
+        for ind,i in pairs(regions) do
+            if i and addr >= i[1] and addr <= i[2] then
+                return memory[ind],regions[ind][1]
+            end
+        end
+    end
+    _G.address = {memory=memory,regions=regions}
+    local function ReadCell(_,addr)
+        local mem,offset = lookup(addr)
+        if not mem then return false end
+        return mem:ReadCell(addr-offset)
+    end
+
+    local function WriteCell(_,addr,v)
+        local mem,offset = lookup(addr)
+        if not mem then return false end
+        return mem:WriteCell(addr-offset,v)
+    end
+    if quickArgs.addressbus then
+        if quickArgs.ab1dev and quickArgs.ab1s and quickArgs.ab1e then
+            if available_devs[quickArgs.ab1dev] then
+                regions[1] = {quickArgs.ab1s,quickArgs.ab1e}
+                memory[1] = available_devs[quickArgs.ab1dev]
+            else
+                error("Failed to set up address bus device 1, device missing.")
+            end
+        end
+        if quickArgs.ab2dev and quickArgs.ab2s and quickArgs.ab2e then
+            if available_devs[quickArgs.ab2dev] then
+                regions[2] = {quickArgs.ab2s,quickArgs.ab2e}
+                memory[2] = available_devs[quickArgs.ab2dev]
+            else
+                error("Failed to set up address bus device 2, device missing.")
+            end
+        end
+        if quickArgs.ab3dev and quickArgs.ab3s and quickArgs.ab3e then
+            if available_devs[quickArgs.ab3dev] then
+                regions[3] = {quickArgs.ab3s,quickArgs.ab3e}
+                memory[3] = available_devs[quickArgs.ab3dev]
+            else
+                error("Failed to set up address bus device 3, device missing.")
+            end
+        end
+        if quickArgs.ab4dev and quickArgs.ab4s and quickArgs.ab4e then
+            if available_devs[quickArgs.ab4dev] then
+                regions[4] = {quickArgs.ab4s,quickArgs.ab4e}
+                memory[4] = available_devs[quickArgs.ab4dev]
+            else
+                error("Failed to set up address bus device 4, device missing.")
+            end
+        end
+        VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell}
+    end
+end
 local content = file.readAll()
 file.close()
 
@@ -820,11 +1025,37 @@ for num in content:gmatch("[+-]?%d*%.?%d+") do
 end
 
 term.clear()
-while VM.interrupt_flag == 0 do
-    VM:step()
-    term.setCursorPos(1,1)
-    sleep(0.05)
-    print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+if quickArgs.stepmode then
+    print("Press any key to do a step.")
+    while true do
+        if VM.interrupt_flag ~= 0 then break end
+        local e,c = os.pullEvent("char")
+        --term.clear()
+        VM:step()
+        term.setCursorPos(1,1)
+        print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+        -- print("\n\n",c)
+    end
+else
+    local time = os.clock()
+    local ips = 0
+    while VM.interrupt_flag == 0 do
+        VM:step()
+        ips = ips + 1
+        if os.clock()-time > 1 then
+            print("IPS:",ips)
+            ips = 0
+            time = os.clock()
+            sleep(0.05)
+        end
+        --term.setCursorPos(1,1)
+        -- sleep(0.05)
+        --print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+    end
+end
+
+for ind,i in ipairs(files) do
+    if i and i.close then i.close() end
 end
 
 error("Error: " .. VM.interrupt_flag .. "("..VM.ErrorCodes[VM.interrupt_flag]..")" .. " " .. VM.LADD,0)
