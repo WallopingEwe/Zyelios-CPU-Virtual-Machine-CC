@@ -2,6 +2,26 @@ local args = { ... }
 if not args[1] then
     error("Requires a filename to execute",0)
 end
+local quickArgs = {}
+do
+    local prevArg
+    for ind,i in ipairs(args) do
+        if string.match(i,"^%-") then
+            if prevArg then
+                quickArgs[prevArg] = true
+                prevArg = nil
+            end
+            prevArg = string.sub(i,2)
+        elseif prevArg then
+            quickArgs[prevArg] = tonumber(i) or i
+            prevArg = nil
+        end
+    end
+    if prevArg then
+        quickArgs[prevArg] = true
+        prevArg = nil
+    end
+end
 local VM = {}
 
 VM.ErrorCodes = {
@@ -799,7 +819,8 @@ function VM:step()
 end
 
 
-local filename = args[1]
+local filename = quickArgs.i
+local files = {}
 local file = fs.open(filename, "r")
 
 if not file then
@@ -820,11 +841,34 @@ for num in content:gmatch("[+-]?%d*%.?%d+") do
 end
 
 term.clear()
-while VM.interrupt_flag == 0 do
-    VM:step()
-    term.setCursorPos(1,1)
-    sleep(0.05)
-    print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+if quickArgs.stepmode then
+    print("Press any key to do a step.")
+    while true do
+        if VM.interrupt_flag ~= 0 then break end
+        local e,c = os.pullEvent("char")
+        --term.clear()
+        VM:step()
+        term.setCursorPos(1,1)
+        print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+        -- print("\n\n",c)
+    end
+else
+    local time = os.clock()
+    local ips = 0
+    while VM.interrupt_flag == 0 do
+        VM:step()
+        ips = ips + 1
+        if os.clock()-time > 1 then
+            print("IPS:",ips)
+            ips = 0
+            time = os.clock()
+            sleep(0.05)
+        end
+        --term.setCursorPos(1,1)
+        -- sleep(0.05)
+        --print(string.format("IP: %d, EAX: %f, EBX: %f, ECX: %f, EDX: %f, ESI: %f, EDI: %f, ESP: %f", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+    end
+end
 end
 
 error("Error: " .. VM.interrupt_flag .. "("..VM.ErrorCodes[VM.interrupt_flag]..")" .. " " .. VM.LADD,0)
