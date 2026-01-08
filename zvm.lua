@@ -315,8 +315,8 @@ function VM:int_vm(n, p)
 end
 
 function VM:Push(n)
-    self.ESP = self.ESP - 1
     local v = self:WriteCell(self.ESP + self.SS, n)
+    self.ESP = self.ESP - 1
     if self.interrupt_flag ~= 0 then return end
 
     if self.ESP < 0 then
