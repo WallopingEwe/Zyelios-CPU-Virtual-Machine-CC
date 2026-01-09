@@ -482,25 +482,24 @@ do
         end
     end
     local function segreg_getter(reg_rm,seg_rm)
-        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
-        local reg = VM:GetRegister(reg_rm)
         return function()
-            if VM.interrupt_flag ~= 0 then return 0 end
-            if VM.interrupt_flag ~= 0 then return 0 end
-            print("regseg",reg_rm,seg_rm,reg()+seg())
-            return reg()+seg()
+            local reg = VM:GetRegister(reg_rm)
+            if VM.interrupt_flag ~= 0 then return end
+            local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
+            if VM.interrupt_flag ~= 0 then return end
+            return reg+seg()
         end
     end
     local function segextreg_getter(reg_rm,seg_rm)
-        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
         return function()
+            local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
             if VM.interrupt_flag ~= 0 then return end
-            return VM.R[reg_rm]()+seg()
+            return VM.R[reg_rm]+seg()
         end
     end
     local function segconst_getter(const_rm,seg_rm)
-        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
         return function()
+            local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
             if VM.interrupt_flag ~= 0 then return end
             return const_rm+seg()
         end
@@ -511,17 +510,15 @@ do
         end
     end
     local function register_setter(index)
-        local reg = REGISTER_LOOKUP[index]
-        if not reg or not VM[reg] then VM:int_vm(VM.ErrorCodes.ERR_PROCESSOR_FAULT,index+0.222) end
         return function(value)
-            VM[reg] = value
+            VM:SetInternalRegister(index, value)
         end
     end
     local function register_getter(rm)
-        local reg = VM:GetRegister(rm)
         return function()
+            local reg = VM:GetRegister(rm)
             if VM.interrupt_flag ~= 0 then return end
-            return reg()
+            return reg
         end
     end
     function VM:GetOperand(rm, segment)
@@ -579,7 +576,7 @@ do
     }
     function VM:GetRegister(index)
         local reg = registers[index]
-        if reg then return reg end
+        if reg then return reg() end
         self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
         return nil
     end
@@ -587,31 +584,27 @@ end
 
 do
     local segments = {
-        [1] = function() return VM.CS, 16 end,
-        [2] = function() return VM.SS, 17 end,
-        [3] = function() return VM.DS, 18 end,
-        [4] = function() return VM.ES, 19 end,
-        [5] = function() return VM.GS, 20 end,
-        [6] = function() return VM.FS, 21 end,
-        [7] = function() return VM.KS, 22 end,
-        [8] = function() return VM.LS, 23 end,
-        [9] = function() return VM.EAX, 1 end,
-        [10] = function() return VM.EBX, 2 end,
-        [11] = function() return VM.ECX, 3 end,
-        [12] = function() return VM.EDX, 4 end,
-        [13] = function() return VM.ESI, 5 end,
-        [14] = function() return VM.EDI, 6 end,
-        [15] = function() return VM.ESP, 7 end,
-        [16] = function() return VM.EBP, 8 end
+        [1] = function() return VM.CS end,
+        [2] = function() return VM.SS end,
+        [3] = function() return VM.DS end,
+        [4] = function() return VM.ES end,
+        [5] = function() return VM.GS end,
+        [6] = function() return VM.FS end,
+        [7] = function() return VM.KS end,
+        [8] = function() return VM.LS end,
+        [9] = function() return VM.EAX end,
+        [10] = function() return VM.EBX end,
+        [11] = function() return VM.ECX end,
+        [12] = function() return VM.EDX end,
+        [13] = function() return VM.ESI end,
+        [14] = function() return VM.EDI end,
+        [15] = function() return VM.ESP end,
+        [16] = function() return VM.EBP end
     }
-    local function r_seg_getter(ind)
-        return function()
-            return VM.R[ind],ind
-        end
-    end
+
     function VM:GetSegment(index)
         if segments[index] then return segments[index] end
-        if index >= 17 and index <= 47 then return r_seg_getter(index - 17) end
+        if index >= 17 and index <= 47 then return VM.R[index - 17] end
         self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
         return nil
     end
@@ -805,6 +798,7 @@ function VM:step()
         self:int_vm(self.ErrorCodes.ERR_EXECUTE_VIOLATION, self.IP)
         return
     end
+    
     local cached = self.instruction_cache[self.XEIP + self.CS]
     if cached then
         self:fetch() -- like I said before, we need this to determine that the memory is still accessible.
@@ -833,7 +827,7 @@ function VM:step()
     end
 
     if instr[2] == 0 and instr[3] then
-        self:cacheInstruction(self.XEIP, instr[3])
+        self:cacheInstruction(self.XEIP + self.CS, instr[3])
         instr[3](self)
         return
     end
@@ -861,10 +855,11 @@ function VM:step()
             opcode = opcode - 1000
         end
     end
-
+ 
     if instr[2] == 1 then
         local op1_get, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
+
         inst_env.op1 = op1_get()
         inst_env.op1_set = op1_set
         self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, nil, op1_set, nil)
@@ -873,6 +868,7 @@ function VM:step()
         if self.interrupt_flag ~= 0 then return end
         local op2_get, op2_set = self:GetOperand(rm2, segment2)
         if self.interrupt_flag ~= 0 then return end
+
         inst_env.op1 = op1_get()
         inst_env.op2 = op2_get()
         inst_env.op1_set = op1_set
@@ -885,7 +881,7 @@ end
 
 local filename = quickArgs.i
 local files = {}
-local file = fs.open(filename, "r")
+local file = fs.open(shell.resolve(filename), "r")
 
 if not file then
     error("No file found!", 2)
