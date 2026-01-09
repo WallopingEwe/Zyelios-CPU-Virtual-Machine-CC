@@ -478,34 +478,35 @@ do
     end
     local function memory_getter(addr_getter)
         return function()
+            if VM.interrupt_flag ~= 0 then return end
             return VM:ReadCell(addr_getter())
         end
     end
     local function segreg_getter(reg_rm,seg_rm)
+        local reg = VM:GetRegister(reg_rm)
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
         return function()
-            local reg = VM:GetRegister(reg_rm)
             if VM.interrupt_flag ~= 0 then return end
-            local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
-            if VM.interrupt_flag ~= 0 then return end
-            return reg+seg()
+            return reg()+seg()
         end
     end
     local function segextreg_getter(reg_rm,seg_rm)
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
         return function()
-            local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
             if VM.interrupt_flag ~= 0 then return end
             return VM.R[reg_rm]+seg()
         end
     end
     local function segconst_getter(const_rm,seg_rm)
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
         return function()
-            local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
             if VM.interrupt_flag ~= 0 then return end
             return const_rm+seg()
         end
     end
     local function memory_setter(addr_getter)
         return function(value)
+            if VM.interrupt_flag ~= 0 then return end
             VM:WriteCell(addr_getter(), value)
         end
     end
@@ -515,10 +516,10 @@ do
         end
     end
     local function register_getter(rm)
+        local reg = VM:GetRegister(rm)
         return function()
-            local reg = VM:GetRegister(rm)
             if VM.interrupt_flag ~= 0 then return end
-            return reg
+            return reg()
         end
     end
     function VM:GetOperand(rm, segment)
@@ -576,7 +577,7 @@ do
     }
     function VM:GetRegister(index)
         local reg = registers[index]
-        if reg then return reg() end
+        if reg then return reg end
         self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
         return nil
     end
