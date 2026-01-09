@@ -482,18 +482,21 @@ do
         end
     end
     local function segreg_getter(reg_rm,seg_rm)
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
+        local reg = VM:GetRegister(reg_rm)
         return function()
-            local reg = VM:GetRegister(reg_rm)
             if VM.interrupt_flag ~= 0 then return 0 end
-            local seg = seg_rm == -1 and VM.DS or VM:GetSegment(seg_rm)
             if VM.interrupt_flag ~= 0 then return 0 end
-            return reg+seg
+            print("regseg",reg_rm,seg_rm,reg()+seg())
+            return reg()+seg()
         end
     end
     local function segextreg_getter(reg_rm,seg_rm)
-        local seg = seg_rm == -1 and VM.DS or VM:GetSegment(seg_rm)
-        if VM.interrupt_flag ~= 0 then return end
-        return VM.R[reg_rm]()+seg
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
+        return function()
+            if VM.interrupt_flag ~= 0 then return end
+            return VM.R[reg_rm]()+seg()
+        end
     end
     local function segconst_getter(const_rm,seg_rm)
         local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
@@ -515,10 +518,10 @@ do
         end
     end
     local function register_getter(rm)
+        local reg = VM:GetRegister(rm)
         return function()
-            local reg = VM:GetRegister(rm)
             if VM.interrupt_flag ~= 0 then return end
-            return reg
+            return reg()
         end
     end
     function VM:GetOperand(rm, segment)
@@ -576,7 +579,7 @@ do
     }
     function VM:GetRegister(index)
         local reg = registers[index]
-        if reg then return reg() end
+        if reg then return reg end
         self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
         return nil
     end
@@ -906,12 +909,19 @@ local function loadChunk(chunkname)
             index = (address*8)+8 -- for after the operation
             chunk.seek("set",address*8)
         end
-        return string.unpack("d",chunk.read(8))
+        local v = chunk.read(8)
+        if not v then return false end
+        return string.unpack("d",v)
     end
     function chunkObj:WriteCell(address,value)
         if address*8 ~= index then
+            local oldIndex = index
             index = (address*8)+8 -- for after the operation
-            chunk.seek("set",address*8)
+            local a = chunk.seek("set",address*8)
+            if a ~= (address*8)+8 then
+                index = oldIndex
+                return false
+            end
         end
         chunk.write(string.pack("d",value))
         return true
@@ -963,7 +973,6 @@ do
             end
         end
     end
-    _G.address = {memory=memory,regions=regions}
     local function ReadCell(_,addr)
         local mem,offset = lookup(addr)
         if not mem then return false end
@@ -1008,7 +1017,7 @@ do
                 error("Failed to set up address bus device 4, device missing.")
             end
         end
-        VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell}
+        VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell,regions=regions}
     end
 end
 local content = file.readAll()
@@ -1024,19 +1033,106 @@ for num in content:gmatch("[+-]?%d*%.?%d+") do
     i = i + 1
 end
 
+local labels
+if quickArgs.lfile then
+    local f = fs.open(shell.resolve(quickArgs.lfile),"r")
+    local rawlabels = textutils.unserialize(f.readAll())
+    labels = {
+        {
+            labelName = "Start of loaded program",
+            labelStart = 0,
+        }
+    }
+    f.close()
+    for k,v in pairs(rawlabels) do
+        table.insert(labels,{
+            labelName = k,
+            labelStart = v,
+        })
+    end
+    table.sort(labels,function(a,b)
+        return a.labelStart < b.labelStart
+    end)
+    table.insert(labels,{
+        labelName = "End of loaded program",
+        labelStart = i,
+    })
+    if quickArgs.addressbus then
+        local startregion = VM.MEMORY_MODEL
+        local endregion = math.pow(2,48)
+        for ind,i in ipairs(VM.ExternalMemory.regions) do
+            table.insert(labels,{
+                labelName = "AB Channel "..ind,
+                labelStart = i[1]+VM.MEMORY_MODEL,
+                labelEnd = i[2]+VM.MEMORY_MODEL
+            })
+            endregion = i[2]+VM.MEMORY_MODEL
+        end
+        table.insert(labels,{
+            labelName = "End of possible memory",
+            labelStart = startregion+VM.MEMORY_MODEL,
+            labelEnd = endregion,
+        })
+    else
+        table.insert(labels,{
+            labelName = "End of possible memory",
+            labelStart = VM.MEMORY_MODEL,
+            labelEnd = math.pow(2,48)
+        })
+    end
+    local prev
+    for ind,i in ipairs(labels) do
+        if prev and not prev.labelEnd then
+            prev.labelEnd = i.labelStart
+        end
+        prev = i
+    end
+    local debugOut = fs.open("debugout.zdsm","w")
+    debugOut.write(textutils.serialize(labels))
+    debugOut.close()
+end
+
 term.clear()
 local main
 if quickArgs.stepmode then
     print("Press any key to do a step.")
+    local curLabel = 1
     main = function()
         while true do
             if VM.interrupt_flag ~= 0 then break end
             local e,c = os.pullEvent("char")
-            --term.clear()
+            term.clear()
             VM:step()
             term.setCursorPos(1,1)
             print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
-            -- print("\n\n",c)
+            if labels then
+                if not labels[curLabel] then
+                    local IP = VM.IP
+                    for ind,i in ipairs(labels) do
+                        if IP >= i.labelStart and IP <= i.labelEnd then
+                            curLabel = ind
+                            break
+                        end
+                    end
+                end
+                if labels[curLabel].labelStart > VM.IP or labels[curLabel].labelEnd < VM.IP then
+                    local action_needed = false
+                    while true do
+                        if labels[curLabel].labelStart > VM.IP then
+                            action_needed = true
+                            curLabel = curLabel - 1
+                        end
+                        if not labels[curLabel] then break end
+                        if labels[curLabel].labelEnd <= VM.IP then
+                            action_needed = true
+                            curLabel = curLabel + 1
+                        end
+                        if not action_needed then break end
+                        action_needed = false
+                    end
+                end
+                print("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
+            end
         end
     end
 else
