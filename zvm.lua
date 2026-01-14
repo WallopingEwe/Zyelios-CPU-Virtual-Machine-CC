@@ -1191,9 +1191,17 @@ end
 
 parallel.waitForAny(termChecker,main)
 
+term.clear()
+term.setCursorPos(1,1)
+local startTime = os.epoch("local")
+print("Run time",os.epoch("local")-startTime)
 for ind,i in ipairs(files) do
     if i and i.close then i.close() end
 end
+
+print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+print(string.format("CS: %d, DS: %g, SS: %g ES: %g, FS: %g, GS: %g, LS: %g, KS: %g", VM.CS, VM.DS, VM.SS, VM.ES, VM.FS, VM.GS, VM.LS, VM.KS))
+print(string.format("R0: %d, R1: %g, R2: %g R3: %g, R4: %g, R5: %g, R6: %g, R7: %g", VM.R[0], VM.R[1], VM.R[2], VM.R[3], VM.R[4], VM.R[5], VM.R[6], VM.R[7]))
 
 if VM.interrupt_flag == 0 then
     error("Terminated",0)
