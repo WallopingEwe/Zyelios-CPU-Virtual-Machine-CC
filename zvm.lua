@@ -61,6 +61,7 @@ for i = 0, VM.MEMORY_MODEL do
 end
 VM.IP = 0
 VM.XEIP = 0
+VM.TMR = 0
 VM.CMPR = 0
 VM.IDTR = 0
 VM.PTBE = 0
@@ -348,9 +349,11 @@ function VM:Pop()
 end
 
 function VM:ReadCell(address)
+    VM.TMR = VM.TMR + 1
     if address < 0 or address >= VM.MEMORY_MODEL then
         if VM.ExternalMemory then
             local v = VM.ExternalMemory:ReadCell(address-VM.MEMORY_MODEL)
+            VM.TMR = VM.TMR + 9
             if not v or type(v) ~= "number" then
                 self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
                 return nil
@@ -363,6 +366,7 @@ function VM:ReadCell(address)
     end
     
     if self.PCAP ~= 0 and self.extended_memory_flag ~= 0 then
+        VM.TMR = VM.TMR + 4
         local index = math.floor(address / 128)
         local page = self.Pages[index]
         if self.interrupt_flag ~= 0 then return nil end
@@ -405,8 +409,10 @@ function VM:ReadCell(address)
 end
 
 function VM:WriteCell(address, value)
+    VM.TMR = VM.TMR + 1
     if address < 0 or address >= VM.MEMORY_MODEL then
         if VM.ExternalMemory then
+            VM.TMR = VM.TMR + 9
             local v = VM.ExternalMemory:WriteCell(address-VM.MEMORY_MODEL,value)
             if not v then
                 self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
@@ -419,6 +425,7 @@ function VM:WriteCell(address, value)
     end
 
     if self.PCAP ~= 0 and self.extended_memory_flag ~= 0 then
+        VM.TMR = VM.TMR + 4
         local index = math.floor(address / 128)
         local page = self.Pages[index]
         if self.interrupt_flag ~= 0 then return end
@@ -645,7 +652,7 @@ do
         [26] = VM.XEIP,
         [27] = VM.LADD,
         [28] = VM.LINT,
-        [29] = 0, -- TMR
+        [29] = VM.TMR,
         [30] = 0, -- TIMER
         [31] = 0, -- CPAGE
         [32] = VM.interrupt_flag,
@@ -724,7 +731,7 @@ do
         [26] = function(v) end, -- XEIP
         [27] = function(v) VM.LADD = v end,
         [28] = function(v) VM.LINT = v end,
-        [29] = function(v) end, -- TMR
+        [29] = function(v) VM.TMR = v end, -- TMR
         [30] = function(v) end, -- TIMER
         [31] = function(v) end, -- CPAGE
         [32] = function(v) VM.interrupt_flag = v end,
@@ -822,6 +829,7 @@ function VM:step()
 
         if self.interrupt_flag ~= 0 then return end
         cached.opfn(self)
+        VM.TMR = VM.TMR + 1
         return
     end
     local opcode = self:fetch()
@@ -840,6 +848,7 @@ function VM:step()
     if instr[2] == 0 and instr[3] then
         self:cacheInstruction(self.XEIP + self.CS, instr[3])
         instr[3](self)
+        VM.TMR = VM.TMR + 2500
         return
     end
 
@@ -873,6 +882,7 @@ function VM:step()
 
         inst_env.op1 = op1_get()
         inst_env.op1_set = op1_set
+        VM.TMR = VM.TMR + 5000
         self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, nil, op1_set, nil)
     else
         local op1_get, op1_set = self:GetOperand(rm1, segment1)
@@ -884,6 +894,7 @@ function VM:step()
         inst_env.op2 = op2_get()
         inst_env.op1_set = op1_set
         inst_env.op2_set = op1_set
+        VM.TMR = VM.TMR + 5000
         self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, op2_get, op1_set, op1_set)
     end
     instr[3](self)
@@ -925,7 +936,7 @@ local function loadChunk(chunkname)
     local index = 0
     local chunkObj = {}
     function chunkObj:ReadCell(address)
-        if address*8 ~= index then
+        if address*8 ~= index or true then
             index = (address*8)+8 -- for after the operation
             chunk.seek("set",address*8)
         end
@@ -937,14 +948,14 @@ local function loadChunk(chunkname)
         return string.unpack("d",v)
     end
     function chunkObj:WriteCell(address,value)
-        if address*8 ~= index then
         if quickArgs.logchunks then
             log("CHUNK WRITE",chunkname,address)
         end
+        if address*8 ~= index or true then
             local oldIndex = index
             index = (address*8)+8 -- for after the operation
             local a = chunk.seek("set",address*8)
-            if a ~= (address*8)+8 then
+            if a ~= address*8 then
                 index = oldIndex
                 return false
             end
@@ -1112,7 +1123,9 @@ if quickArgs.stepmode then
             VM:step()
             term.setCursorPos(1,1)
             print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
-            if labels then
+            print(string.format("CS: %d, DS: %g, SS: %g ES: %g, FS: %g, GS: %g, LS: %g, KS: %g", VM.CS, VM.DS, VM.SS, VM.ES, VM.FS, VM.GS, VM.LS, VM.KS))
+            print(string.format("R0: %d, R1: %g, R2: %g R3: %g, R4: %g, R5: %g, R6: %g, R7: %g", VM.R[0], VM.R[1], VM.R[2], VM.R[3], VM.R[4], VM.R[5], VM.R[6], VM.R[7]))
+        if labels then
                 if not labels[curLabel] then
                     local IP = VM.IP
                     for ind,i in ipairs(labels) do
@@ -1147,15 +1160,53 @@ if quickArgs.stepmode then
     end
 else
     main = function()
-        local time = os.clock()
+        local realFrequency = 0
+        if quickArgs.frequency then
+            realFrequency = quickArgs.frequency*0.05
+        end
+        local curLabel = 1
+        local time = os.clock() 
         local ips = 0
         while VM.interrupt_flag == 0 do
             VM:step()
             ips = ips + 1
-            if os.clock()-time > 1 then
+            if (quickArgs.frequency and ips > realFrequency) or (os.clock()-time > 1) then
+                time = os.clock()
+                term.setCursorPos(1,1)
+                term.clear()
                 print("IPS:",ips)
                 ips = 0
-                time = os.clock()
+                print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+                print(string.format("CS: %d, DS: %g, SS: %g ES: %g, FS: %g, GS: %g, LS: %g, KS: %g", VM.CS, VM.DS, VM.SS, VM.ES, VM.FS, VM.GS, VM.LS, VM.KS))
+                print(string.format("R0: %d, R1: %g, R2: %g R3: %g, R4: %g, R5: %g, R6: %g, R7: %g", VM.R[0], VM.R[1], VM.R[2], VM.R[3], VM.R[4], VM.R[5], VM.R[6], VM.R[7]))
+                if labels then
+                    if not labels[curLabel] then
+                        local IP = VM.IP
+                        for ind,i in ipairs(labels) do
+                            if IP >= i.labelStart and IP <= i.labelEnd then
+                                curLabel = ind
+                                break
+                            end
+                        end
+                    end
+                    if labels[curLabel].labelStart > VM.IP or labels[curLabel].labelEnd < VM.IP then
+                        local action_needed = false
+                        while true do
+                            if labels[curLabel].labelStart > VM.IP then
+                                action_needed = true
+                                curLabel = curLabel - 1
+                            end
+                            if not labels[curLabel] then break end
+                            if labels[curLabel].labelEnd <= VM.IP then
+                                action_needed = true
+                                curLabel = curLabel + 1
+                            end
+                            if not action_needed then break end
+                            action_needed = false
+                        end
+                    end
+                    print("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
+                end
                 sleep(0.05)
             end
             --term.setCursorPos(1,1)
