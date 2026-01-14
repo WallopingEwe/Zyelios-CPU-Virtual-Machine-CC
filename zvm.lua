@@ -22,6 +22,7 @@ do
         prevArg = nil
     end
 end
+local log
 local VM = {}
 
 VM.ErrorCodes = {
@@ -257,6 +258,9 @@ function VM:JMP(address, segment)
 end
 
 function VM:CALL(address, segment)
+    if quickArgs.logstack then
+        log("next push is CALL",address,segment)
+    end
     self:Push(self.IP)
     if self.interrupt_flag ~= 0 then return end
     self:JMP(address, segment)
@@ -315,6 +319,9 @@ function VM:int_vm(n, p)
 end
 
 function VM:Push(n)
+    if quickArgs.logstack then
+        log("PUSH V:",n,"@",VM.IP,"ESP:",VM.ESP)
+    end
     local v = self:WriteCell(self.ESP + self.SS, n)
     self.ESP = self.ESP - 1
     if self.interrupt_flag ~= 0 then return end
@@ -326,6 +333,9 @@ function VM:Push(n)
 end
 
 function VM:Pop()
+    if quickArgs.logstack then
+        log("POP","V:",self:ReadCell(self.ESP+self.SS),"@",VM.IP,"ESP:",VM.ESP)
+    end
     self.ESP = self.ESP + 1
     
     if self.ESP > self.ESZ then
@@ -887,6 +897,19 @@ local file = fs.open(shell.resolve(filename), "r")
 if not file then
     error("No file found!", 2)
 end
+local logfile
+local function realLog(...)
+    local str = table.concat(table.pack(...)," ")
+    logfile.write(str.."\n")
+end
+log = function(...)
+    -- log installer
+    logfile = fs.open("zvmlog.txt","w")
+    table.insert(files,logfile)
+    log = realLog
+    return realLog(...)
+end
+
 local chunk1
 local chunk2
 local chunk3
@@ -907,11 +930,17 @@ local function loadChunk(chunkname)
             chunk.seek("set",address*8)
         end
         local v = chunk.read(8)
+        if quickArgs.logchunks then
+            log("CHUNK READ",chunkname,address,v,string.unpack("d",v))
+        end
         if not v then return false end
         return string.unpack("d",v)
     end
     function chunkObj:WriteCell(address,value)
         if address*8 ~= index then
+        if quickArgs.logchunks then
+            log("CHUNK WRITE",chunkname,address)
+        end
             local oldIndex = index
             index = (address*8)+8 -- for after the operation
             local a = chunk.seek("set",address*8)
@@ -1126,6 +1155,9 @@ if quickArgs.stepmode then
                         end
                         if not action_needed then break end
                         action_needed = false
+                    end
+                    if quickArgs.loglabels then
+                        log("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
                     end
                 end
                 print("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
