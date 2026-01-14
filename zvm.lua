@@ -954,38 +954,23 @@ local function loadChunk(chunkname)
     end
     return chunkObj
 end
-if quickArgs.chunk1 or quickArgs.chunk then
-    chunk1 = loadChunk(quickArgs.chunk1 or quickArgs.chunk)
-end
-if quickArgs.chunk2 then
-    chunk2 = loadChunk(quickArgs.chunk2)
-end
-if quickArgs.chunk3 then
-    chunk3 = loadChunk(quickArgs.chunk3)
-end
-if quickArgs.chunk4 then
-    chunk4 = loadChunk(quickArgs.chunk4)
-end
 
 local available_devs = {
-    chunk=chunk1,
-    chunk1=chunk1,
-    chunk2=chunk2,
-    chunk3=chunk3,
-    chunk4=chunk4,
 }
 
-if quickArgs.lddev1 or quickArgs.lddev then
-    available_devs.dev1 = loadfile(shell.resolve(quickArgs.lddev or quickArgs.lddev1))()
-end
-if quickArgs.lddev2 then
-    available_devs.dev2 = loadfile(shell.resolve(quickArgs.lddev2))()
-end
-if quickArgs.lddev3 then
-    available_devs.dev3 = loadfile(shell.resolve(quickArgs.lddev3))()
-end
-if quickArgs.lddev4 then
-    available_devs.dev4 = loadfile(shell.resolve(quickArgs.lddev4))()
+local additional_coroutines = {}
+
+for k,v in pairs(quickArgs) do
+    if string.match(k,"lddev") then
+        local d = tonumber(string.match(k,"([0-9]+)")) or 1
+        local c
+        available_devs["dev"..d],c = loadfile(shell.resolve(v))()
+        if c then table.insert(additional_coroutines,c) end
+    end
+    if string.match(k,"chunk") then
+        local d = tonumber(string.match(k,"([0-9]+)")) or 1
+        available_devs["chunk"..d] = loadChunk(v)
+    end
 end
 
 do
@@ -1011,36 +996,32 @@ do
         return mem:WriteCell(addr-offset,v)
     end
     if quickArgs.addressbus then
-        if quickArgs.ab1dev and quickArgs.ab1s and quickArgs.ab1e then
-            if available_devs[quickArgs.ab1dev] then
-                regions[1] = {quickArgs.ab1s,quickArgs.ab1e}
-                memory[1] = available_devs[quickArgs.ab1dev]
-            else
-                error("Failed to set up address bus device 1, device missing.")
+        for k,v in pairs(quickArgs) do
+            if string.match(k,"ab[0-9]*") then
+                local d = tonumber(string.match(k,"([0-9]+)")) or 1
+                 if string.match(k,"ab[0-9]*dev") then
+                    memory[d] = available_devs[v]
+                elseif string.match(k,"ab[0-9]*s") then
+                    if not regions[d] then
+                        regions[d] = {v}
+                    else
+                        regions[d][1] = v
+                    end
+                elseif string.match(k,"ab[0-9]*e") then
+                    if not regions[d] then
+                        regions[d] = {[2]=v}
+                    else
+                        regions[d][2] = v
+                    end
+                end
             end
         end
-        if quickArgs.ab2dev and quickArgs.ab2s and quickArgs.ab2e then
-            if available_devs[quickArgs.ab2dev] then
-                regions[2] = {quickArgs.ab2s,quickArgs.ab2e}
-                memory[2] = available_devs[quickArgs.ab2dev]
-            else
-                error("Failed to set up address bus device 2, device missing.")
+        for k,v in pairs(regions) do
+            if not v[1] or not v[2] then
+                error("Address bus device "..k.." has an invalid start or end region")
             end
-        end
-        if quickArgs.ab3dev and quickArgs.ab3s and quickArgs.ab3e then
-            if available_devs[quickArgs.ab3dev] then
-                regions[3] = {quickArgs.ab3s,quickArgs.ab3e}
-                memory[3] = available_devs[quickArgs.ab3dev]
-            else
-                error("Failed to set up address bus device 3, device missing.")
-            end
-        end
-        if quickArgs.ab4dev and quickArgs.ab4s and quickArgs.ab4e then
-            if available_devs[quickArgs.ab4dev] then
-                regions[4] = {quickArgs.ab4s,quickArgs.ab4e}
-                memory[4] = available_devs[quickArgs.ab4dev]
-            else
-                error("Failed to set up address bus device 4, device missing.")
+            if not memory[k] then
+                error("Address bus device "..k.." has a region but no device")
             end
         end
         VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell,regions=regions}
@@ -1189,11 +1170,10 @@ local function termChecker()
     return
 end
 
-parallel.waitForAny(termChecker,main)
-
 term.clear()
 term.setCursorPos(1,1)
 local startTime = os.epoch("local")
+parallel.waitForAny(termChecker,main,table.unpack(additional_coroutines))
 print("Run time",os.epoch("local")-startTime)
 for ind,i in ipairs(files) do
     if i and i.close then i.close() end
