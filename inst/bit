@@ -34,6 +34,173 @@ local function BNOT(vm)
     op1 = bit.bnot(op1)
 end
 
+local valid_options = {
+    [-1] = "b",
+    [-2] = "h",
+    [1] = "B",
+    [2] = "H",
+    [3] = "i",
+    [-3] = "I",
+    [-4] = "f",
+    [4] = "f",
+    [-8] = "d",
+    [8] = "d",
+}
+
+local sizes = {
+    b=1,
+    B=1,
+    h=2,
+    H=2,
+    i=4,
+    I=4,
+    f=4,
+    d=8,
+}
+
+local masks = {
+    b=0x80,
+    B=0x100,
+    h=0x8000,
+    H=0x10000,
+    i=0x80000000,
+    I=0x100000000,
+}
+
+local floor = math.floor
+local pack,unpack = string.pack,string.unpack
+local rep = string.rep
+
+local function SPLIT(vm)
+    local t = valid_options[op1]
+    if not t then
+        vm:int_vm(vm.ErrorCodes.ERR_INTERNAL_ERROR, vm.IP)
+    end
+    local size = sizes[t]
+    local mask = masks[t]
+    local packed
+    if mask then
+        packed = pack(t,floor(vm.EAX % mask))
+    else
+        packed = pack(t,vm.EAX)
+    end
+    local sizestr = rep(op1 < 0 and "b" or "B",size)
+    if size == 1 then
+        vm.EAX = unpack(sizestr,packed)
+        return
+    end
+    if size == 2 then
+        vm.EAX,vm.EBX = unpack(sizestr,packed)
+        return
+    end
+    if size == 4 then
+        vm.EAX,vm.EBX,vm.ECX,vm.EDX = unpack(sizestr,packed)
+        return
+    end
+    if size == 8 then
+        vm.EAX,vm.EBX,vm.ECX,vm.EDX,vm.ESI,vm.EDI,vm.EBP,vm.ESP = unpack(sizestr,packed)
+        return
+    end
+end
+
+local function SPLITM(vm)
+    local t = valid_options[op2]
+    if not t then
+        vm:int_vm(vm.ErrorCodes.ERR_INTERNAL_ERROR, vm.IP)
+    end
+    local size = sizes[t]
+    local mask = masks[t]
+    local packed
+    if mask then
+        packed = pack(t,floor(vm.EAX % mask))
+    else
+        packed = pack(t,vm.EAX)
+    end
+    local sizestr = rep(op2 < 0 and "b" or "B",size)
+    if size == 1 then
+        vm:WriteCell(op1,unpack(sizestr,packed))
+        return
+    end
+    if size == 2 then
+        local l1,l2 = unpack(sizestr,packed)
+        vm:WriteCell(op1,l1)
+        vm:WriteCell(op1+1,l2)
+        return
+    end
+    if size == 4 then
+        local l1,l2,l3,l4 = unpack(sizestr,packed)
+        print(l1,l2,l3,l4,size)
+        vm:WriteCell(op1,l1)
+        vm:WriteCell(op1+1,l2)
+        vm:WriteCell(op1+2,l3)
+        vm:WriteCell(op1+3,l4)
+        return
+    end
+    if size == 8 then
+        local l1,l2,l3,l4,l5,l6,l7,l8 = unpack(sizestr,packed)
+        vm:WriteCell(op1,l1)
+        vm:WriteCell(op1+1,l2)
+        vm:WriteCell(op1+2,l3)
+        vm:WriteCell(op1+3,l4)
+        vm:WriteCell(op1+4,l5)
+        vm:WriteCell(op1+5,l6)
+        vm:WriteCell(op1+6,l7)
+        vm:WriteCell(op1+7,l8)
+        return
+    end
+end
+
+local function JOIN(vm)
+    local t = valid_options[op1]
+    if not t then
+        vm:int_vm(vm.ErrorCodes.ERR_INTERNAL_ERROR, vm.IP)
+    end
+    local size = sizes[t]
+    local mask = masks[t]
+    local packed
+    local sizestr = rep(op1 < 0 and "b" or "B",size)
+    if mask then
+        packed = pack(sizestr,
+        floor(vm.EAX % 256),
+        floor(vm.EBX % 256),
+        floor(vm.ECX % 256),
+        floor(vm.EDX % 256),
+        floor(vm.ESI % 256),
+        floor(vm.EDI % 256),
+        floor(vm.EBP % 256),
+        floor(vm.ESP % 256)
+    )
+    end
+    vm.EAX = unpack(t,packed)
+    return
+end
+
+local function JOINM()
+    local function JOIN(vm)
+        local t = valid_options[op2]
+        if not t then
+            vm:int_vm(vm.ErrorCodes.ERR_INTERNAL_ERROR, vm.IP)
+        end
+        local size = sizes[t]
+        local mask = masks[t]
+        local packed
+        local sizestr = rep(op2 < 0 and "b" or "B",size)
+        if mask then
+            packed = pack(sizestr,
+            floor(vm.EAX % 256),
+            floor(vm.EBX % 256),
+            floor(vm.ECX % 256),
+            floor(vm.EDX % 256),
+            floor(vm.ESI % 256),
+            floor(vm.EDI % 256),
+            floor(vm.EBP % 256),
+            floor(vm.ESP % 256)
+        )
+        end
+        vm:WriteCell(op1,unpack(t,packed))
+        return
+    end
+end
 
 return {
     { 60, 2, BIT, "BIT" },
@@ -44,4 +211,8 @@ return {
     { 65, 2, BOR, "BOR" },
     { 67, 2, BSHL, "BSHL" },
     { 68, 2, BSHR, "BSHR" },
+    { 155, 1, SPLIT, "SPLIT" },
+    { 156, 2, SPLITM, "SPLITM" },
+    { 157, 1, JOIN, "JOIN" },
+    { 158, 2, JOINM, "JOINM" },
 }

@@ -22,6 +22,7 @@ do
         prevArg = nil
     end
 end
+local log
 local VM = {}
 
 VM.ErrorCodes = {
@@ -60,6 +61,7 @@ for i = 0, VM.MEMORY_MODEL do
 end
 VM.IP = 0
 VM.XEIP = 0
+VM.TMR = 0
 VM.CMPR = 0
 VM.IDTR = 0
 VM.PTBE = 0
@@ -257,6 +259,9 @@ function VM:JMP(address, segment)
 end
 
 function VM:CALL(address, segment)
+    if quickArgs.logstack then
+        log("next push is CALL",address,segment)
+    end
     self:Push(self.IP)
     if self.interrupt_flag ~= 0 then return end
     self:JMP(address, segment)
@@ -315,6 +320,9 @@ function VM:int_vm(n, p)
 end
 
 function VM:Push(n)
+    if quickArgs.logstack then
+        log("PUSH V:",n,"@",VM.IP,"ESP:",VM.ESP)
+    end
     local v = self:WriteCell(self.ESP + self.SS, n)
     self.ESP = self.ESP - 1
     if self.interrupt_flag ~= 0 then return end
@@ -326,6 +334,9 @@ function VM:Push(n)
 end
 
 function VM:Pop()
+    if quickArgs.logstack then
+        log("POP","V:",self:ReadCell(self.ESP+self.SS),"@",VM.IP,"ESP:",VM.ESP)
+    end
     self.ESP = self.ESP + 1
     
     if self.ESP > self.ESZ then
@@ -338,9 +349,11 @@ function VM:Pop()
 end
 
 function VM:ReadCell(address)
+    VM.TMR = VM.TMR + 1
     if address < 0 or address >= VM.MEMORY_MODEL then
         if VM.ExternalMemory then
             local v = VM.ExternalMemory:ReadCell(address-VM.MEMORY_MODEL)
+            VM.TMR = VM.TMR + 9
             if not v or type(v) ~= "number" then
                 self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
                 return nil
@@ -353,6 +366,7 @@ function VM:ReadCell(address)
     end
     
     if self.PCAP ~= 0 and self.extended_memory_flag ~= 0 then
+        VM.TMR = VM.TMR + 4
         local index = math.floor(address / 128)
         local page = self.Pages[index]
         if self.interrupt_flag ~= 0 then return nil end
@@ -395,8 +409,10 @@ function VM:ReadCell(address)
 end
 
 function VM:WriteCell(address, value)
+    VM.TMR = VM.TMR + 1
     if address < 0 or address >= VM.MEMORY_MODEL then
         if VM.ExternalMemory then
+            VM.TMR = VM.TMR + 9
             local v = VM.ExternalMemory:WriteCell(address-VM.MEMORY_MODEL,value)
             if not v then
                 self:int_vm(self.ErrorCodes.ERR_MEMORY_FAULT, address)
@@ -409,6 +425,7 @@ function VM:WriteCell(address, value)
     end
 
     if self.PCAP ~= 0 and self.extended_memory_flag ~= 0 then
+        VM.TMR = VM.TMR + 4
         local index = math.floor(address / 128)
         local page = self.Pages[index]
         if self.interrupt_flag ~= 0 then return end
@@ -478,22 +495,24 @@ do
     end
     local function memory_getter(addr_getter)
         return function()
+            if VM.interrupt_flag ~= 0 then return end
             return VM:ReadCell(addr_getter())
         end
     end
     local function segreg_getter(reg_rm,seg_rm)
+        local reg = VM:GetRegister(reg_rm)
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
         return function()
-            local reg = VM:GetRegister(reg_rm)
-            if VM.interrupt_flag ~= 0 then return 0 end
-            local seg = seg_rm == -1 and VM.DS or VM:GetSegment(seg_rm)
-            if VM.interrupt_flag ~= 0 then return 0 end
-            return reg+seg
+            if VM.interrupt_flag ~= 0 then return end
+            return reg()+seg()
         end
     end
     local function segextreg_getter(reg_rm,seg_rm)
-        local seg = seg_rm == -1 and VM.DS or VM:GetSegment(seg_rm)
-        if VM.interrupt_flag ~= 0 then return end
-        return VM.R[reg_rm]()+seg
+        local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
+        return function()
+            if VM.interrupt_flag ~= 0 then return end
+            return VM.R[reg_rm]+seg()
+        end
     end
     local function segconst_getter(const_rm,seg_rm)
         local seg = seg_rm == -1 and VM:GetSegment(3) or VM:GetSegment(seg_rm)
@@ -504,21 +523,20 @@ do
     end
     local function memory_setter(addr_getter)
         return function(value)
+            if VM.interrupt_flag ~= 0 then return end
             VM:WriteCell(addr_getter(), value)
         end
     end
     local function register_setter(index)
-        local reg = REGISTER_LOOKUP[index]
-        if not reg or not VM[reg] then VM:int_vm(VM.ErrorCodes.ERR_PROCESSOR_FAULT,index+0.222) end
         return function(value)
-            VM[reg] = value
+            VM:SetInternalRegister(index, value)
         end
     end
     local function register_getter(rm)
+        local reg = VM:GetRegister(rm)
         return function()
-            local reg = VM:GetRegister(rm)
             if VM.interrupt_flag ~= 0 then return end
-            return reg
+            return reg()
         end
     end
     function VM:GetOperand(rm, segment)
@@ -576,7 +594,7 @@ do
     }
     function VM:GetRegister(index)
         local reg = registers[index]
-        if reg then return reg() end
+        if reg then return reg end
         self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
         return nil
     end
@@ -584,31 +602,27 @@ end
 
 do
     local segments = {
-        [1] = function() return VM.CS, 16 end,
-        [2] = function() return VM.SS, 17 end,
-        [3] = function() return VM.DS, 18 end,
-        [4] = function() return VM.ES, 19 end,
-        [5] = function() return VM.GS, 20 end,
-        [6] = function() return VM.FS, 21 end,
-        [7] = function() return VM.KS, 22 end,
-        [8] = function() return VM.LS, 23 end,
-        [9] = function() return VM.EAX, 1 end,
-        [10] = function() return VM.EBX, 2 end,
-        [11] = function() return VM.ECX, 3 end,
-        [12] = function() return VM.EDX, 4 end,
-        [13] = function() return VM.ESI, 5 end,
-        [14] = function() return VM.EDI, 6 end,
-        [15] = function() return VM.ESP, 7 end,
-        [16] = function() return VM.EBP, 8 end
+        [1] = function() return VM.CS end,
+        [2] = function() return VM.SS end,
+        [3] = function() return VM.DS end,
+        [4] = function() return VM.ES end,
+        [5] = function() return VM.GS end,
+        [6] = function() return VM.FS end,
+        [7] = function() return VM.KS end,
+        [8] = function() return VM.LS end,
+        [9] = function() return VM.EAX end,
+        [10] = function() return VM.EBX end,
+        [11] = function() return VM.ECX end,
+        [12] = function() return VM.EDX end,
+        [13] = function() return VM.ESI end,
+        [14] = function() return VM.EDI end,
+        [15] = function() return VM.ESP end,
+        [16] = function() return VM.EBP end
     }
-    local function r_seg_getter(ind)
-        return function()
-            return VM.R[ind],ind
-        end
-    end
+
     function VM:GetSegment(index)
         if segments[index] then return segments[index] end
-        if index >= 17 and index <= 47 then return r_seg_getter(index - 17) end
+        if index >= 17 and index <= 47 then return VM.R[index - 17] end
         self:int_vm(self.ErrorCodes.ERR_PROCESSOR_FAULT, index)
         return nil
     end
@@ -638,7 +652,7 @@ do
         [26] = VM.XEIP,
         [27] = VM.LADD,
         [28] = VM.LINT,
-        [29] = 0, -- TMR
+        [29] = VM.TMR,
         [30] = 0, -- TIMER
         [31] = 0, -- CPAGE
         [32] = VM.interrupt_flag,
@@ -717,7 +731,7 @@ do
         [26] = function(v) end, -- XEIP
         [27] = function(v) VM.LADD = v end,
         [28] = function(v) VM.LINT = v end,
-        [29] = function(v) end, -- TMR
+        [29] = function(v) VM.TMR = v end, -- TMR
         [30] = function(v) end, -- TIMER
         [31] = function(v) end, -- CPAGE
         [32] = function(v) VM.interrupt_flag = v end,
@@ -802,6 +816,7 @@ function VM:step()
         self:int_vm(self.ErrorCodes.ERR_EXECUTE_VIOLATION, self.IP)
         return
     end
+    
     local cached = self.instruction_cache[self.XEIP + self.CS]
     if cached then
         self:fetch() -- like I said before, we need this to determine that the memory is still accessible.
@@ -814,6 +829,7 @@ function VM:step()
 
         if self.interrupt_flag ~= 0 then return end
         cached.opfn(self)
+        VM.TMR = VM.TMR + 1
         return
     end
     local opcode = self:fetch()
@@ -830,8 +846,9 @@ function VM:step()
     end
 
     if instr[2] == 0 and instr[3] then
-        self:cacheInstruction(self.XEIP, instr[3])
+        self:cacheInstruction(self.XEIP + self.CS, instr[3])
         instr[3](self)
+        VM.TMR = VM.TMR + 2500
         return
     end
 
@@ -858,22 +875,26 @@ function VM:step()
             opcode = opcode - 1000
         end
     end
-
+ 
     if instr[2] == 1 then
         local op1_get, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
+
         inst_env.op1 = op1_get()
         inst_env.op1_set = op1_set
+        VM.TMR = VM.TMR + 5000
         self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, nil, op1_set, nil)
     else
         local op1_get, op1_set = self:GetOperand(rm1, segment1)
         if self.interrupt_flag ~= 0 then return end
         local op2_get, op2_set = self:GetOperand(rm2, segment2)
         if self.interrupt_flag ~= 0 then return end
+
         inst_env.op1 = op1_get()
         inst_env.op2 = op2_get()
         inst_env.op1_set = op1_set
         inst_env.op2_set = op1_set
+        VM.TMR = VM.TMR + 5000
         self:cacheInstruction(self.XEIP + self.CS, instr[3], op1_get, op2_get, op1_set, op1_set)
     end
     instr[3](self)
@@ -882,11 +903,24 @@ end
 
 local filename = quickArgs.i
 local files = {}
-local file = fs.open(filename, "r")
+local file = fs.open(shell.resolve(filename), "r")
 
 if not file then
     error("No file found!", 2)
 end
+local logfile
+local function realLog(...)
+    local str = table.concat(table.pack(...)," ")
+    logfile.write(str.."\n")
+end
+log = function(...)
+    -- log installer
+    logfile = fs.open("zvmlog.txt","w")
+    table.insert(files,logfile)
+    log = realLog
+    return realLog(...)
+end
+
 local chunk1
 local chunk2
 local chunk3
@@ -902,54 +936,52 @@ local function loadChunk(chunkname)
     local index = 0
     local chunkObj = {}
     function chunkObj:ReadCell(address)
-        if address*8 ~= index then
+        if address*8 ~= index or true then
             index = (address*8)+8 -- for after the operation
             chunk.seek("set",address*8)
         end
-        return string.unpack("d",chunk.read(8))
+        local v = chunk.read(8)
+        if quickArgs.logchunks then
+            log("CHUNK READ",chunkname,address,v,string.unpack("d",v))
+        end
+        if not v then return false end
+        return string.unpack("d",v)
     end
     function chunkObj:WriteCell(address,value)
-        if address*8 ~= index then
+        if quickArgs.logchunks then
+            log("CHUNK WRITE",chunkname,address)
+        end
+        if address*8 ~= index or true then
+            local oldIndex = index
             index = (address*8)+8 -- for after the operation
-            chunk.seek("set",address*8)
+            local a = chunk.seek("set",address*8)
+            if a ~= address*8 then
+                index = oldIndex
+                return false
+            end
         end
         chunk.write(string.pack("d",value))
         return true
     end
     return chunkObj
 end
-if quickArgs.chunk1 or quickArgs.chunk then
-    chunk1 = loadChunk(quickArgs.chunk1 or quickArgs.chunk)
-end
-if quickArgs.chunk2 then
-    chunk2 = loadChunk(quickArgs.chunk2)
-end
-if quickArgs.chunk3 then
-    chunk3 = loadChunk(quickArgs.chunk3)
-end
-if quickArgs.chunk4 then
-    chunk4 = loadChunk(quickArgs.chunk4)
-end
 
 local available_devs = {
-    chunk=chunk1,
-    chunk1=chunk1,
-    chunk2=chunk2,
-    chunk3=chunk3,
-    chunk4=chunk4,
 }
 
-if quickArgs.lddev1 or quickArgs.lddev then
-    available_devs.dev1 = loadfile(shell.resolve(quickArgs.lddev or quickArgs.lddev1))()
-end
-if quickArgs.lddev2 then
-    available_devs.dev2 = loadfile(shell.resolve(quickArgs.lddev2))()
-end
-if quickArgs.lddev3 then
-    available_devs.dev3 = loadfile(shell.resolve(quickArgs.lddev3))()
-end
-if quickArgs.lddev4 then
-    available_devs.dev4 = loadfile(shell.resolve(quickArgs.lddev4))()
+local additional_coroutines = {}
+
+for k,v in pairs(quickArgs) do
+    if string.match(k,"lddev") then
+        local d = tonumber(string.match(k,"([0-9]+)")) or 1
+        local c
+        available_devs["dev"..d],c = loadfile(shell.resolve(v))()
+        if c then table.insert(additional_coroutines,c) end
+    end
+    if string.match(k,"chunk") then
+        local d = tonumber(string.match(k,"([0-9]+)")) or 1
+        available_devs["chunk"..d] = loadChunk(v)
+    end
 end
 
 do
@@ -963,7 +995,6 @@ do
             end
         end
     end
-    _G.address = {memory=memory,regions=regions}
     local function ReadCell(_,addr)
         local mem,offset = lookup(addr)
         if not mem then return false end
@@ -976,39 +1007,35 @@ do
         return mem:WriteCell(addr-offset,v)
     end
     if quickArgs.addressbus then
-        if quickArgs.ab1dev and quickArgs.ab1s and quickArgs.ab1e then
-            if available_devs[quickArgs.ab1dev] then
-                regions[1] = {quickArgs.ab1s,quickArgs.ab1e}
-                memory[1] = available_devs[quickArgs.ab1dev]
-            else
-                error("Failed to set up address bus device 1, device missing.")
+        for k,v in pairs(quickArgs) do
+            if string.match(k,"ab[0-9]*") then
+                local d = tonumber(string.match(k,"([0-9]+)")) or 1
+                 if string.match(k,"ab[0-9]*dev") then
+                    memory[d] = available_devs[v]
+                elseif string.match(k,"ab[0-9]*s") then
+                    if not regions[d] then
+                        regions[d] = {v}
+                    else
+                        regions[d][1] = v
+                    end
+                elseif string.match(k,"ab[0-9]*e") then
+                    if not regions[d] then
+                        regions[d] = {[2]=v}
+                    else
+                        regions[d][2] = v
+                    end
+                end
             end
         end
-        if quickArgs.ab2dev and quickArgs.ab2s and quickArgs.ab2e then
-            if available_devs[quickArgs.ab2dev] then
-                regions[2] = {quickArgs.ab2s,quickArgs.ab2e}
-                memory[2] = available_devs[quickArgs.ab2dev]
-            else
-                error("Failed to set up address bus device 2, device missing.")
+        for k,v in pairs(regions) do
+            if not v[1] or not v[2] then
+                error("Address bus device "..k.." has an invalid start or end region")
+            end
+            if not memory[k] then
+                error("Address bus device "..k.." has a region but no device")
             end
         end
-        if quickArgs.ab3dev and quickArgs.ab3s and quickArgs.ab3e then
-            if available_devs[quickArgs.ab3dev] then
-                regions[3] = {quickArgs.ab3s,quickArgs.ab3e}
-                memory[3] = available_devs[quickArgs.ab3dev]
-            else
-                error("Failed to set up address bus device 3, device missing.")
-            end
-        end
-        if quickArgs.ab4dev and quickArgs.ab4s and quickArgs.ab4e then
-            if available_devs[quickArgs.ab4dev] then
-                regions[4] = {quickArgs.ab4s,quickArgs.ab4e}
-                memory[4] = available_devs[quickArgs.ab4dev]
-            else
-                error("Failed to set up address bus device 4, device missing.")
-            end
-        end
-        VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell}
+        VM.ExternalMemory = {ReadCell=ReadCell,WriteCell=WriteCell,regions=regions}
     end
 end
 local content = file.readAll()
@@ -1024,32 +1051,162 @@ for num in content:gmatch("[+-]?%d*%.?%d+") do
     i = i + 1
 end
 
+local labels
+if quickArgs.lfile then
+    local f = fs.open(shell.resolve(quickArgs.lfile),"r")
+    local rawlabels = textutils.unserialize(f.readAll())
+    labels = {
+        {
+            labelName = "Start of loaded program",
+            labelStart = 0,
+        }
+    }
+    f.close()
+    for k,v in pairs(rawlabels) do
+        table.insert(labels,{
+            labelName = k,
+            labelStart = v,
+        })
+    end
+    table.sort(labels,function(a,b)
+        return a.labelStart < b.labelStart
+    end)
+    table.insert(labels,{
+        labelName = "End of loaded program",
+        labelStart = i,
+    })
+    if quickArgs.addressbus then
+        local startregion = VM.MEMORY_MODEL
+        local endregion = math.pow(2,48)
+        for ind,i in ipairs(VM.ExternalMemory.regions) do
+            table.insert(labels,{
+                labelName = "AB Channel "..ind,
+                labelStart = i[1]+VM.MEMORY_MODEL,
+                labelEnd = i[2]+VM.MEMORY_MODEL
+            })
+            endregion = i[2]+VM.MEMORY_MODEL
+        end
+        table.insert(labels,{
+            labelName = "End of possible memory",
+            labelStart = startregion+VM.MEMORY_MODEL,
+            labelEnd = endregion,
+        })
+    else
+        table.insert(labels,{
+            labelName = "End of possible memory",
+            labelStart = VM.MEMORY_MODEL,
+            labelEnd = math.pow(2,48)
+        })
+    end
+    local prev
+    for ind,i in ipairs(labels) do
+        if prev and not prev.labelEnd then
+            prev.labelEnd = i.labelStart
+        end
+        prev = i
+    end
+    local debugOut = fs.open("debugout.zdsm","w")
+    debugOut.write(textutils.serialize(labels))
+    debugOut.close()
+end
+
 term.clear()
 local main
 if quickArgs.stepmode then
     print("Press any key to do a step.")
+    local curLabel = 1
     main = function()
         while true do
             if VM.interrupt_flag ~= 0 then break end
             local e,c = os.pullEvent("char")
-            --term.clear()
+            term.clear()
             VM:step()
             term.setCursorPos(1,1)
             print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
-            -- print("\n\n",c)
+            print(string.format("CS: %d, DS: %g, SS: %g ES: %g, FS: %g, GS: %g, LS: %g, KS: %g", VM.CS, VM.DS, VM.SS, VM.ES, VM.FS, VM.GS, VM.LS, VM.KS))
+            print(string.format("R0: %d, R1: %g, R2: %g R3: %g, R4: %g, R5: %g, R6: %g, R7: %g", VM.R[0], VM.R[1], VM.R[2], VM.R[3], VM.R[4], VM.R[5], VM.R[6], VM.R[7]))
+        if labels then
+                if not labels[curLabel] then
+                    local IP = VM.IP
+                    for ind,i in ipairs(labels) do
+                        if IP >= i.labelStart and IP <= i.labelEnd then
+                            curLabel = ind
+                            break
+                        end
+                    end
+                end
+                if labels[curLabel].labelStart > VM.IP or labels[curLabel].labelEnd < VM.IP then
+                    local action_needed = false
+                    while true do
+                        if labels[curLabel].labelStart > VM.IP then
+                            action_needed = true
+                            curLabel = curLabel - 1
+                        end
+                        if not labels[curLabel] then break end
+                        if labels[curLabel].labelEnd <= VM.IP then
+                            action_needed = true
+                            curLabel = curLabel + 1
+                        end
+                        if not action_needed then break end
+                        action_needed = false
+                    end
+                    if quickArgs.loglabels then
+                        log("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
+                    end
+                end
+                print("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
+            end
         end
     end
 else
     main = function()
-        local time = os.clock()
+        local realFrequency = 0
+        if quickArgs.frequency then
+            realFrequency = quickArgs.frequency*0.05
+        end
+        local curLabel = 1
+        local time = os.clock() 
         local ips = 0
         while VM.interrupt_flag == 0 do
             VM:step()
             ips = ips + 1
-            if os.clock()-time > 1 then
+            if (quickArgs.frequency and ips > realFrequency) or (os.clock()-time > 1) then
+                time = os.clock()
+                term.setCursorPos(1,1)
+                term.clear()
                 print("IPS:",ips)
                 ips = 0
-                time = os.clock()
+                print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+                print(string.format("CS: %d, DS: %g, SS: %g ES: %g, FS: %g, GS: %g, LS: %g, KS: %g", VM.CS, VM.DS, VM.SS, VM.ES, VM.FS, VM.GS, VM.LS, VM.KS))
+                print(string.format("R0: %d, R1: %g, R2: %g R3: %g, R4: %g, R5: %g, R6: %g, R7: %g", VM.R[0], VM.R[1], VM.R[2], VM.R[3], VM.R[4], VM.R[5], VM.R[6], VM.R[7]))
+                if labels then
+                    if not labels[curLabel] then
+                        local IP = VM.IP
+                        for ind,i in ipairs(labels) do
+                            if IP >= i.labelStart and IP <= i.labelEnd then
+                                curLabel = ind
+                                break
+                            end
+                        end
+                    end
+                    if labels[curLabel].labelStart > VM.IP or labels[curLabel].labelEnd < VM.IP then
+                        local action_needed = false
+                        while true do
+                            if labels[curLabel].labelStart > VM.IP then
+                                action_needed = true
+                                curLabel = curLabel - 1
+                            end
+                            if not labels[curLabel] then break end
+                            if labels[curLabel].labelEnd <= VM.IP then
+                                action_needed = true
+                                curLabel = curLabel + 1
+                            end
+                            if not action_needed then break end
+                            action_needed = false
+                        end
+                    end
+                    print("Currently in",labels[curLabel] and labels[curLabel].labelName or "Uncharted Memory")
+                end
                 sleep(0.05)
             end
             --term.setCursorPos(1,1)
@@ -1064,11 +1221,18 @@ local function termChecker()
     return
 end
 
-parallel.waitForAny(termChecker,main)
-
+term.clear()
+term.setCursorPos(1,1)
+local startTime = os.epoch("local")
+parallel.waitForAny(termChecker,main,table.unpack(additional_coroutines))
+print("Run time",os.epoch("local")-startTime)
 for ind,i in ipairs(files) do
     if i and i.close then i.close() end
 end
+
+print(string.format("IP: %d, EAX: %g, EBX: %g, ECX: %g, EDX: %g, ESI: %g, EDI: %g, ESP: %g", VM.IP, VM.EAX, VM.EBX, VM.ECX, VM.EDX, VM.ESI, VM.EDI, VM.ESP))
+print(string.format("CS: %d, DS: %g, SS: %g ES: %g, FS: %g, GS: %g, LS: %g, KS: %g", VM.CS, VM.DS, VM.SS, VM.ES, VM.FS, VM.GS, VM.LS, VM.KS))
+print(string.format("R0: %d, R1: %g, R2: %g R3: %g, R4: %g, R5: %g, R6: %g, R7: %g", VM.R[0], VM.R[1], VM.R[2], VM.R[3], VM.R[4], VM.R[5], VM.R[6], VM.R[7]))
 
 if VM.interrupt_flag == 0 then
     error("Terminated",0)
